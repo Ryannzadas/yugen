@@ -1,0 +1,1 @@
+ALTER TABLE `user_anime_statuses` ADD `favorite` integer DEFAULT false NOT NULL;
