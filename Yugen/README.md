@@ -94,4 +94,4 @@ npm run db:push      # sincronização direta para desenvolvimento
 
 ## Dados de animes
 
-Os títulos, imagens, sinopses, trailers, personagens, equipe e músicas-tema vêm da API pública da Jikan/MyAnimeList. O catálogo usa paginação: **Carregar mais animes** continua percorrendo todos os resultados disponíveis sem tentar baixar a base inteira de uma só vez. Dados pessoais, biblioteca e discussões ficam no PostgreSQL do projeto.
+Os títulos e imagens da listagem vêm da API pública Shikimori, mantendo os IDs do MyAnimeList. A página individual usa a Jikan para sinopse, trailer, personagens, equipe e músicas-tema, com fallback automático para a Shikimori quando a Jikan estiver indisponível. O catálogo usa paginação: **Carregar mais animes** continua percorrendo os resultados disponíveis sem tentar baixar a base inteira de uma só vez. Dados pessoais, biblioteca e discussões ficam no PostgreSQL do projeto.
