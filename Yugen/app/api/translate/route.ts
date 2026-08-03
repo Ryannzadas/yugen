@@ -1,0 +1,66 @@
+type TargetLanguage = "pt" | "es";
+
+const translationCache = new Map<string, string>();
+
+function splitText(text: string, maxLength = 420) {
+  const chunks: string[] = [];
+  let remaining = text.trim();
+  while (remaining.length > maxLength) {
+    const candidate = remaining.slice(0, maxLength);
+    const sentenceBreak = Math.max(candidate.lastIndexOf(". "), candidate.lastIndexOf("! "), candidate.lastIndexOf("? "));
+    const wordBreak = candidate.lastIndexOf(" ");
+    const splitAt = sentenceBreak > maxLength * 0.55 ? sentenceBreak + 1 : wordBreak > maxLength * 0.55 ? wordBreak : maxLength;
+    chunks.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+function decodeEntities(text: string) {
+  return text
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">");
+}
+
+async function translateChunk(text: string, target: TargetLanguage) {
+  const params = new URLSearchParams({ q: text, langpair: `en|${target}` });
+  const response = await fetch(`https://api.mymemory.translated.net/get?${params.toString()}`, {
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`Translation service returned ${response.status}`);
+  const data = await response.json() as {
+    responseStatus?: number;
+    responseDetails?: string;
+    responseData?: { translatedText?: string };
+  };
+  const translated = data.responseData?.translatedText;
+  if (data.responseStatus !== 200 || !translated) throw new Error(data.responseDetails || "Translation failed");
+  return decodeEntities(translated);
+}
+
+export async function POST(request: Request) {
+  try {
+    const payload = await request.json() as { text?: string; target?: string };
+    const text = payload.text?.trim() || "";
+    const target = payload.target as TargetLanguage;
+    if (!text) return Response.json({ error: "text is required" }, { status: 400 });
+    if (!(["pt", "es"] as string[]).includes(target)) return Response.json({ error: "unsupported target language" }, { status: 400 });
+    if (text.length > 8000) return Response.json({ error: "text is too long" }, { status: 413 });
+
+    const cacheKey = `${target}:${text}`;
+    const cached = translationCache.get(cacheKey);
+    if (cached) return Response.json({ text: cached, cached: true });
+
+    const translatedChunks: string[] = [];
+    for (const chunk of splitText(text)) translatedChunks.push(await translateChunk(chunk, target));
+    const translated = translatedChunks.join(" ");
+    translationCache.set(cacheKey, translated);
+    return Response.json({ text: translated, cached: false });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Translation failed" }, { status: 502 });
+  }
+}
