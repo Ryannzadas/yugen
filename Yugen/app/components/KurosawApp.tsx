@@ -1432,7 +1432,19 @@ type SocialPost = {
   poll?: { first: string; second: string };
 };
 
-type SocialSection = "feed" | "explore";
+type SocialSection = "feed" | "explore" | "notifications";
+
+type SocialNotification = {
+  id: string;
+  type: "reply" | "like" | "follow";
+  actor: string;
+  actorAvatar?: string | null;
+  title: string;
+  description: string;
+  createdAt: string;
+  animeSlug?: string | null;
+  animeTitle?: string | null;
+};
 
 function SocialPostCard({ post, onHide }: { post: SocialPost; onHide: () => void }) {
   const [liked, setLiked] = useState(false);
@@ -1531,6 +1543,9 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
   const [accountMenu, setAccountMenu] = useState(false);
   const [compactFeed, setCompactFeed] = useState(false);
   const [feedNotice, setFeedNotice] = useState("");
+  const [notifications, setNotifications] = useState<SocialNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationsError, setNotificationsError] = useState("");
 
   async function loadDiscussions() {
     setFeedLoading(true);
@@ -1564,6 +1579,31 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
     loadDiscussions();
   }, []);
 
+  async function loadNotifications() {
+    if (!user) {
+      setNotifications([]);
+      setNotificationsLoading(false);
+      return;
+    }
+    setNotificationsLoading(true);
+    setNotificationsError("");
+    try {
+      const response = await fetch("/api/notifications", { cache: "no-store" });
+      const data = await response.json() as { notifications?: SocialNotification[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível carregar as notificações.");
+      setNotifications(data.notifications || []);
+    } catch (error) {
+      setNotificationsError(error instanceof Error ? error.message : "Não foi possível carregar as notificações.");
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (user === undefined) return;
+    loadNotifications();
+  }, [user?.email]);
+
   useEffect(() => {
     if (!animeSlug && animeFeed.items[0]) setAnimeSlug(animeFeed.items[0].slug);
   }, [animeFeed.items, animeSlug]);
@@ -1575,7 +1615,7 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
     const matchesQuery = !query || `${post.author} ${post.handle} ${post.body} ${post.anime?.title ?? ""}`.toLowerCase().includes(query);
     return matchesQuery;
   });
-  const sectionTitle = section === "feed" ? "Discussões" : "Explorar";
+  const sectionTitle = section === "feed" ? "Discussões" : section === "explore" ? "Explorar" : "Notificações";
 
   function openComposer() {
     setSection("feed");
@@ -1620,6 +1660,7 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
           <nav>
             <button className={section === "feed" ? "active" : ""} onClick={() => setSection("feed")}><span>⌂</span>Discussões</button>
             <button className={section === "explore" ? "active" : ""} onClick={() => setSection("explore")}><span>#</span>Explorar</button>
+            <button className={section === "notifications" ? "active" : ""} onClick={() => setSection("notifications")}><span>♧</span>Notificações</button>
             <Link href="/profile"><span>◎</span>Perfil</Link>
           </nav>
           <button className="primary-button social-post-button" onClick={openComposer}>Nova publicação</button>
@@ -1628,7 +1669,7 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
 
         <section className={`social-feed ${compactFeed ? "compact" : ""}`}>
           <header className="feed-header"><div><p className="eyebrow">Comunidade Yugen</p><h1>{sectionTitle}</h1></div><div className="feed-menu-wrap"><button onClick={() => setFeedMenu(!feedMenu)} aria-label="Configurações das discussões" aria-expanded={feedMenu}>•••</button>{feedMenu && <div className="social-menu feed-menu" role="menu"><button onClick={() => chooseFeedOption("refresh")} role="menuitem"><span>↻</span>Atualizar feed</button><button onClick={() => chooseFeedOption("compact")} role="menuitem"><span>≡</span>{compactFeed ? "Visualização confortável" : "Visualização compacta"}</button><Link href="/blueprint" role="menuitem"><span>◇</span>Regras da comunidade</Link></div>}</div></header>
-          <nav className="mobile-social-nav" aria-label="Navegação móvel das discussões"><button className={section === "feed" ? "active" : ""} onClick={() => setSection("feed")} aria-label="Discussões">⌂</button><button className={section === "explore" ? "active" : ""} onClick={() => setSection("explore")} aria-label="Explorar">#</button></nav>
+          <nav className="mobile-social-nav" aria-label="Navegação móvel das discussões"><button className={section === "feed" ? "active" : ""} onClick={() => setSection("feed")} aria-label="Discussões">⌂</button><button className={section === "explore" ? "active" : ""} onClick={() => setSection("explore")} aria-label="Explorar">#</button><button className={section === "notifications" ? "active" : ""} onClick={() => setSection("notifications")} aria-label="Notificações">♧</button></nav>
           {feedNotice && <button className="feed-notice" onClick={() => setFeedNotice("")}>{feedNotice}<span>×</span></button>}
 
           {section === "feed" && <>
@@ -1641,6 +1682,8 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
           </>}
 
           {section === "explore" && <section className="section-panel explore-panel"><div className="panel-intro"><p className="eyebrow">Encontre uma conversa real</p><h2>Explore a comunidade.</h2><p>Pesquise nas publicações que já foram registradas no Yugen.</p></div><label className="explore-search"><span>⌕</span><input value={exploreQuery} onChange={(event) => setExploreQuery(event.target.value)} placeholder="Pesquisar autor, anime ou texto" /></label><div className="timeline explore-results">{explorePosts.length ? explorePosts.map(renderPost) : <div className="social-empty"><span>⌕</span><h3>Nenhuma discussão encontrada</h3><p>Tente outra busca.</p></div>}</div></section>}
+
+          {section === "notifications" && <section className="section-panel notifications-panel"><div className="panel-intro split-panel"><div><p className="eyebrow">Atividade real da sua conta</p><h2>Notificações.</h2><p>Respostas, curtidas e novos seguidores aparecem aqui quando acontecerem.</p></div>{user && <button className="ghost-button" type="button" onClick={loadNotifications} disabled={notificationsLoading}>↻ Atualizar</button>}</div>{!user ? <div className="social-empty"><span>♧</span><h3>Entre para ver suas notificações</h3><p>O Yugen mostrará somente atividades reais relacionadas à sua conta.</p><Link className="primary-button small" href="/api/auth/signin?callbackUrl=/discussions">Entrar</Link></div> : notificationsLoading ? <div className="social-empty"><span>◌</span><h3>Carregando notificações</h3></div> : notificationsError ? <div className="social-empty"><span>!</span><h3>Não foi possível atualizar</h3><p>{notificationsError}</p><button className="ghost-button" onClick={loadNotifications}>Tentar novamente</button></div> : notifications.length ? <div className="notification-list">{notifications.map((notification) => <Link className="notification-item" href={notification.animeSlug ? `/anime/${notification.animeSlug}?tab=discussions` : "/discussions"} key={notification.id}><span className="notification-icon">{notification.type === "reply" ? "↩" : notification.type === "like" ? "♡" : "+"}</span><div><b>{notification.title}</b><p>{notification.description}</p><small>{notification.animeTitle ? `${notification.animeTitle} · ` : ""}{discussionTime(notification.createdAt)}</small></div></Link>)}</div> : <div className="social-empty"><span>♧</span><h3>Nenhuma notificação ainda</h3><p>Quando alguém responder, curtir ou seguir você, a atividade aparecerá aqui.</p></div>}</section>}
         </section>
 
         <aside className="social-rail">

@@ -920,7 +920,7 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
   .social-nav { display: none; }
   .social-feed { border-left: 1px solid var(--line); }
   .feed-header { top: 66px; }
-  .mobile-social-nav { position: sticky; top: 154px; z-index: 7; display: grid; grid-template-columns: repeat(2, 1fr); min-height: 48px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(18px); }
+  .mobile-social-nav { position: sticky; top: 154px; z-index: 7; display: grid; grid-template-columns: repeat(3, 1fr); min-height: 48px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(18px); }
   .mobile-social-nav button { position: relative; border: 0; background: transparent; color: var(--muted); font-size: 18px; }
   .mobile-social-nav button.active { color: var(--text); }
   .mobile-social-nav button.active::after { content: ""; position: absolute; left: 32%; right: 32%; bottom: 0; height: 2px; background: var(--text); }
