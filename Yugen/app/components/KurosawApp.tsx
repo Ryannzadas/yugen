@@ -72,7 +72,21 @@ function airedPt(value: string | undefined) {
 }
 function ratingLabelPt(value: string | undefined) {
   if (!value || value === "Not rated") return "Não classificado";
-  return value.replace("violence & profanity", "violência e linguagem imprópria").replace("mild nudity", "nudez leve").replace("Children", "Infantil").replace("All Ages", "Todas as idades");
+  const normalized = value.trim();
+  if (/^PG-13\b/i.test(normalized)) return "PG-13 · 13 anos ou mais";
+  if (/^PG\b/i.test(normalized)) return "PG · público infantil";
+  if (/^R\+/i.test(normalized)) return "R+ · 17 anos ou mais · nudez leve";
+  if (/^R\b/i.test(normalized)) return "R · 17 anos ou mais · violência e linguagem imprópria";
+  if (/^RX\b/i.test(normalized)) return "Rx · conteúdo adulto";
+  if (/^G\b/i.test(normalized)) return "Livre · todas as idades";
+  return normalized.replace("violence & profanity", "violência e linguagem imprópria").replace("mild nudity", "nudez leve").replace("Children", "Infantil").replace("All Ages", "Todas as idades");
+}
+
+function ratingBadgePt(value: string | undefined) {
+  const translated = ratingLabelPt(value);
+  if (translated.startsWith("R+")) return "R+ · 17 anos ou mais";
+  if (translated.startsWith("R ·")) return "R · 17 anos ou mais";
+  return translated;
 }
 
 const synopsisCache = new Map<string, string>();
@@ -669,7 +683,7 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
   }, [translatedSynopsis.text]);
   const featuredRating =
     !featuredDetailPending && featured?.ratingLabel && featured.ratingLabel !== "Not rated"
-      ? featured.ratingLabel.split(" ")[0]
+      ? ratingBadgePt(featured.ratingLabel)
       : featuredDetailPending ? "…" : "—";
   async function saveFeatured() {
     if (!featured) return;
@@ -934,6 +948,39 @@ type Comment = {
   animePoster?: string | null;
 };
 
+type YouTubePlayer = {
+  playVideo: () => void;
+  pauseVideo: () => void;
+  getPlayerState: () => number;
+  getCurrentTime: () => number;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  setPlaybackRate: (rate: number) => void;
+  mute: () => void;
+  unMute: () => void;
+  isMuted: () => boolean;
+  getIframe: () => HTMLIFrameElement;
+  destroy: () => void;
+};
+
+type YouTubePlayerOptions = {
+  videoId: string;
+  host?: string;
+  playerVars: Record<string, string | number>;
+  events: {
+    onReady: (event: { target: YouTubePlayer }) => void;
+    onStateChange: (event: { data: number }) => void;
+    onPlaybackRateChange: (event: { data: number }) => void;
+  };
+};
+
+type YouTubePlayerConstructor = new (element: HTMLElement, options: YouTubePlayerOptions) => YouTubePlayer;
+
+declare global {
+  interface Window {
+    YT?: { Player: YouTubePlayerConstructor };
+  }
+}
+
 function discussionTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -947,13 +994,137 @@ function discussionTime(value: string) {
   return formatter.format(Math.round(hours / 24), "day");
 }
 
+function youtubeVideoId(url?: string | null) {
+  return url?.match(/(?:embed\/|youtu\.be\/|[?&]v=)([A-Za-z0-9_-]{6,})/)?.[1] || null;
+}
+
+function AnimeTrailerBanner({ anime }: { anime: Anime }) {
+  const videoId = youtubeVideoId(anime.trailerUrl);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<YouTubePlayer | null>(null);
+  const [playing, setPlaying] = useState(true);
+  const [muted, setMuted] = useState(true);
+  const [speed, setSpeed] = useState(1);
+
+  useEffect(() => {
+    if (!videoId || !hostRef.current) return;
+    const selectedVideoId = videoId;
+    let cancelled = false;
+    let intervalId = 0;
+    const scriptId = "youtube-iframe-api";
+
+    function createPlayer() {
+      if (cancelled || playerRef.current || !hostRef.current) return;
+      const Player = window.YT?.Player;
+      if (!Player) return;
+      playerRef.current = new Player(hostRef.current, {
+        videoId: selectedVideoId,
+        host: "https://www.youtube-nocookie.com",
+        playerVars: {
+          autoplay: 1,
+          mute: 1,
+          controls: 0,
+          disablekb: 1,
+          loop: 1,
+          playlist: selectedVideoId,
+          playsinline: 1,
+          rel: 0,
+          modestbranding: 1,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: ({ target }) => {
+            target.mute();
+            target.playVideo();
+            setMuted(true);
+          },
+          onStateChange: ({ data }) => setPlaying(data === 1),
+          onPlaybackRateChange: ({ data }) => setSpeed(data),
+        },
+      });
+    }
+
+    let script = document.getElementById(scriptId) as HTMLScriptElement | null;
+    if (!script) {
+      script = document.createElement("script");
+      script.id = scriptId;
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      document.head.appendChild(script);
+    }
+    script.addEventListener("load", createPlayer);
+    createPlayer();
+    intervalId = window.setInterval(() => {
+      createPlayer();
+      if (playerRef.current) window.clearInterval(intervalId);
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      script?.removeEventListener("load", createPlayer);
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
+  }, [videoId]);
+
+  function togglePlayback() {
+    const player = playerRef.current;
+    if (!player) return;
+    if (player.getPlayerState() === 1) player.pauseVideo();
+    else player.playVideo();
+  }
+
+  function seek(seconds: number) {
+    const player = playerRef.current;
+    if (!player) return;
+    player.seekTo(Math.max(0, player.getCurrentTime() + seconds), true);
+  }
+
+  function changeSpeed() {
+    const rates = [1, 1.25, 1.5, 2];
+    const nextRate = rates[(rates.indexOf(speed) + 1) % rates.length];
+    playerRef.current?.setPlaybackRate(nextRate);
+    setSpeed(nextRate);
+  }
+
+  function toggleMute() {
+    const player = playerRef.current;
+    if (!player) return;
+    if (player.isMuted()) player.unMute();
+    else player.mute();
+    setMuted(player.isMuted());
+  }
+
+  function openFullscreen() {
+    playerRef.current?.getIframe().requestFullscreen?.();
+  }
+
+  return (
+    <section className="anime-hero anime-trailer-hero">
+      <div className="anime-backdrop" style={anime.backdrop ? { backgroundImage: `url(${anime.backdrop})` } : undefined} />
+      {videoId && <div className="anime-trailer-player" aria-label={`Trailer de ${anime.title}`}><div ref={hostRef} /></div>}
+      <div className="anime-backdrop-shade" />
+      {videoId && (
+        <div className="trailer-controls" aria-label="Controles do trailer">
+          <button type="button" onClick={() => seek(-10)} aria-label="Voltar 10 segundos">↶ <span>10s</span></button>
+          <button className="trailer-play" type="button" onClick={togglePlayback} aria-label={playing ? "Pausar trailer" : "Reproduzir trailer"}>{playing ? "❚❚" : "▶"}</button>
+          <button type="button" onClick={() => seek(10)} aria-label="Avançar 10 segundos"><span>10s</span> ↷</button>
+          <button type="button" onClick={changeSpeed} aria-label={`Alterar velocidade. Velocidade atual ${speed} vezes`}>{speed}×</button>
+          <button type="button" onClick={toggleMute} aria-label={muted ? "Ativar som" : "Desativar som"}>{muted ? "Som" : "Mudo"}</button>
+          <button type="button" onClick={openFullscreen} aria-label="Exibir trailer em tela cheia">⛶</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { slug?: string; openModal: (modal: Modal) => void; language: Language; user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary }) {
   const remoteId = slug?.startsWith("mal-") ? Number(slug.slice(4)) : 0;
   const [remoteAnime, setRemoteAnime] = useState<Anime | null>(null);
   const [detailLoading, setDetailLoading] = useState(Boolean(remoteId));
   const [detailError, setDetailError] = useState("");
   const [tab, setTab] = useState("Visão geral");
-  const [trailerOpen, setTrailerOpen] = useState(false);
   const [libraryMessage, setLibraryMessage] = useState("");
   const [comments, setComments] = useState<Comment[]>([]);
   const [comment, setComment] = useState("");
@@ -1012,15 +1183,6 @@ function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { 
     return () => controller.abort();
   }, [slug, anime.slug]);
 
-  useEffect(() => {
-    if (!trailerOpen) return;
-    function closeTrailer(event: KeyboardEvent) {
-      if (event.key === "Escape") setTrailerOpen(false);
-    }
-    document.addEventListener("keydown", closeTrailer);
-    return () => document.removeEventListener("keydown", closeTrailer);
-  }, [trailerOpen]);
-
   async function publishComment(body: string, parentId?: string | null) {
     setMessage("Publicando…");
     try {
@@ -1062,11 +1224,7 @@ function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { 
 
   return (
     <main className="anime-page">
-      <section className="anime-hero">
-        <div className="anime-backdrop" style={anime.backdrop ? { backgroundImage: `url(${anime.backdrop})` } : undefined} />
-        <div className="anime-backdrop-shade" />
-        {anime.trailerUrl && <button className="trailer-button" type="button" onClick={() => setTrailerOpen(true)}>▶ Assistir ao trailer</button>}
-      </section>
+      <AnimeTrailerBanner anime={anime} />
       <section className="anime-summary page-shell">
         <Poster anime={anime} className="anime-poster" />
         <div className="anime-heading">
@@ -1096,7 +1254,6 @@ function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { 
         {tab === "Avaliações" && <ReviewsTab anime={anime} entry={libraryEntry} updateLibrary={updateLibrary} />}
         {tab === "Discussões" && <DiscussionTab comments={comments} comment={comment} setComment={setComment} submit={submitComment} onReply={publishComment} message={message} />}
       </section>
-      {anime.trailerUrl && trailerOpen && <div className="trailer-modal-backdrop" role="dialog" aria-modal="true" aria-label={`Trailer de ${anime.title}`} onMouseDown={() => setTrailerOpen(false)}><div className="trailer-modal" onMouseDown={(event) => event.stopPropagation()}><button className="trailer-close" type="button" onClick={() => setTrailerOpen(false)} aria-label="Fechar trailer">×</button><iframe src={anime.trailerUrl} title={`Trailer de ${anime.title}`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /></div></div>}
     </main>
   );
 }

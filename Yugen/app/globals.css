@@ -293,8 +293,15 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
 
 .anime-hero { position: relative; height: clamp(280px, 28vw, 350px); overflow: hidden; background: #08090c; }
 .anime-backdrop { background-position: center 30%; filter: blur(2px) saturate(.7); transform: scale(1.035); }
-.anime-backdrop-shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(7,8,11,.62), transparent 60%), linear-gradient(0deg, var(--bg), transparent 65%); }
-.trailer-button { position: absolute; right: clamp(24px, 6vw, 90px); bottom: 52px; min-height: 48px; padding: 0 20px; border: 0; border-radius: 4px; background: #f3eee8; color: #121215; font-weight: 700; }
+.anime-trailer-player { position: absolute; inset: 0; overflow: hidden; background: #000; }
+.anime-trailer-player iframe { position: absolute; top: 50%; left: 50%; width: 100vw; height: 56.25vw; min-width: 100%; min-height: 100%; border: 0; pointer-events: none; transform: translate(-50%, -50%); filter: saturate(.72) brightness(.66); }
+.anime-backdrop-shade { position: absolute; z-index: 1; inset: 0; background: linear-gradient(90deg, rgba(7,8,11,.58), transparent 62%), linear-gradient(0deg, var(--bg), transparent 70%); pointer-events: none; }
+.trailer-controls { position: absolute; z-index: 3; right: clamp(20px, 5vw, 76px); bottom: 34px; display: flex; align-items: center; gap: 6px; padding: 7px; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(5,5,7,.76); box-shadow: 0 16px 45px rgba(0,0,0,.42); backdrop-filter: blur(14px); }
+.trailer-controls button { display: inline-flex; min-width: 40px; height: 36px; align-items: center; justify-content: center; gap: 3px; padding: 0 11px; border: 0; border-radius: 999px; background: transparent; color: #f5f3ef; font-size: 11px; font-weight: 700; }
+.trailer-controls button:hover { background: rgba(255,255,255,.14); }
+.trailer-controls button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.trailer-controls .trailer-play { width: 42px; padding: 0; background: #f5f3ef; color: #0b0b0d; }
+.trailer-controls span { font-size: 9px; }
 .anime-summary { position: relative; display: grid; grid-template-columns: 260px minmax(0, 1fr) auto; gap: 40px; align-items: end; padding-top: 0; padding-bottom: 40px; margin-top: -95px; z-index: 2; }
 .anime-poster { height: auto; aspect-ratio: 3/4.1; border-radius: 7px; border: 1px solid rgba(255,255,255,.18); box-shadow: 0 30px 80px rgba(0,0,0,.5); }
 .anime-heading { padding-bottom: 8px; }
@@ -949,7 +956,8 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
   .catalog-toolbar p { order: 3; width: 100%; }
   .catalog-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .anime-hero { height: 210px; }
-  .trailer-button { bottom: 18px; }
+  .trailer-controls { right: 14px; bottom: 16px; left: 14px; justify-content: center; overflow-x: auto; }
+  .trailer-controls button { min-width: 36px; height: 34px; padding-inline: 9px; }
   .anime-summary { display: block; margin-top: -45px; }
   .anime-poster { width: 130px; }
   .anime-heading { margin-top: 22px; }
