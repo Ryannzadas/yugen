@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, type AnchorHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { signIn, signOut } from "next-auth/react";
 import { collections, newsItems, type Anime, type CharacterDetail } from "./data";
-import { fetchAnimeCharacters, fetchAnimeDetail, fetchAnimeList, fetchAnimePage, fetchAnimeStaff, fetchCharacterDetail, fetchSeasonNow } from "./jikan";
+import { fetchAnimeCharacters, fetchAnimeDetail, fetchAnimeList, fetchAnimePage, fetchAnimeSelection, fetchAnimeStaff, fetchCharacterDetail, fetchSeasonNow, type AnimeSelection } from "./jikan";
 import { languageOptions, observeDocumentLanguage, type Language } from "./i18n";
 
 type View = "home" | "catalog" | "anime" | "calendar" | "character" | "collections" | "discussions" | "news" | "article" | "profile" | "settings" | "blueprint";
@@ -321,6 +321,28 @@ function useAnimeFeed(query: string | null = "", limit = 24) {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [query, limit, reload]);
+
+  return { items, loading, error, retry: () => setReload((value) => value + 1) };
+}
+
+function useAnimeSelection(selection: AnimeSelection, limit = 18) {
+  const [items, setItems] = useState<Anime[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError("");
+    fetchAnimeSelection(selection, limit, controller.signal)
+      .then(setItems)
+      .catch((reason) => {
+        if (reason?.name !== "AbortError") setError(reason instanceof Error ? reason.message : "Não foi possível atualizar esta seleção.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [selection, limit, reload]);
 
   return { items, loading, error, retry: () => setReload((value) => value + 1) };
 }
@@ -648,8 +670,20 @@ function Header({ theme, onTheme, onAuth, user, language, onLanguage }: { theme:
 }
 
 function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth: (modal: Modal) => void; language: Language; user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary }) {
-  const feed = useAnimeFeed("", 24);
-  const listedFeatured = feed.items[0];
+  const feed = useAnimeSelection("popular", 24);
+  const trendingFeed = useAnimeSelection("trending", 18);
+  const recommendationFeed = useAnimeSelection("recommended", 18);
+  const heroItems = useMemo(() => trendingFeed.items.slice(0, 5), [trendingFeed.items]);
+  const [heroIndex, setHeroIndex] = useState(0);
+  useEffect(() => {
+    setHeroIndex((current) => heroItems.length ? current % heroItems.length : 0);
+  }, [heroItems.length]);
+  useEffect(() => {
+    if (heroItems.length < 2) return;
+    const timer = window.setInterval(() => setHeroIndex((current) => (current + 1) % heroItems.length), 9000);
+    return () => window.clearInterval(timer);
+  }, [heroItems.length]);
+  const listedFeatured = heroItems[heroIndex] || feed.items[0];
   const [featuredDetail, setFeaturedDetail] = useState<Anime | null>(null);
   useEffect(() => {
     if (!listedFeatured?.malId) return;
@@ -671,7 +705,7 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
   const featuredDetailPending = Boolean(listedFeatured && featuredDetail?.slug !== listedFeatured.slug);
   const featuredEntry = library.find((entry) => entry.slug === featured?.slug);
   const continueWatching = library.filter((entry) => entry.status === "watching" && entry.progressEpisodes > 0).slice(0, 6);
-  const recommendations = feed.items.filter((anime) => !library.some((entry) => entry.slug === anime.slug)).slice(0, 8);
+  const recommendations = recommendationFeed.items.filter((anime) => !library.some((entry) => entry.slug === anime.slug)).slice(0, 8);
   const featuredTitle = featured?.title?.split(" ") || [];
   const translatedSynopsis = useTranslatedSynopsis(featured?.synopsis || featured?.blurb, language);
   const heroSynopsis = useMemo(() => {
@@ -685,22 +719,29 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
     !featuredDetailPending && featured?.ratingLabel && featured.ratingLabel !== "Not rated"
       ? ratingBadgePt(featured.ratingLabel)
       : featuredDetailPending ? "…" : "—";
+  const heroLoading = trendingFeed.loading && feed.loading;
+  const heroError = !featured && (trendingFeed.error || feed.error);
+  const heroTotal = heroItems.length || (featured ? 1 : 0);
   async function saveFeatured() {
     if (!featured) return;
     if (!user) return openAuth("login");
     await saveLibrary(featured, { status: "to_watch" });
   }
+  function moveHero(direction: -1 | 1) {
+    if (!heroItems.length) return;
+    setHeroIndex((current) => (current + direction + heroItems.length) % heroItems.length);
+  }
   return (
     <>
       <section className="hero">
-        <div className="hero-image" style={featured?.backdrop ? { backgroundImage: `url(${featured.backdrop})` } : { backgroundImage: "none" }} />
+        <div className="hero-image" key={featured?.slug || "hero-loading"} style={featured?.backdrop ? { backgroundImage: `url(${featured.backdrop})` } : { backgroundImage: "none" }} />
         <div className="hero-glow" />
         <div className="hero-content">
-          <p className="eyebrow"><span /> {feed.loading ? "Atualizando pela Jikan" : feed.error ? "API de animes indisponível" : "Destaque ao vivo · Jikan / MyAnimeList"}</p>
-          <h1>{featuredTitle[0] || (feed.error ? "Catálogo" : "Carregando")}<br /><em>{featuredTitle.slice(1).join(" ") || (feed.error ? "indisponível" : "anime…")}</em></h1>
-          <p className="hero-copy">{featured ? (featuredDetailPending ? "Carregando sinopse…" : translatedSynopsis.loading ? "Traduzindo sinopse…" : heroSynopsis) : (feed.error ? "O site está aguardando a API Jikan. Nenhum anime adicionado manualmente será exibido." : "Buscando os dados mais recentes dos animes…")}</p>
+          <p className="eyebrow"><span /> {heroLoading ? "Atualizando destaques" : heroError ? "API de animes indisponível" : "Em alta nesta temporada · MyAnimeList"}</p>
+          <h1>{featuredTitle[0] || (heroError ? "Catálogo" : "Carregando")}<br /><em>{featuredTitle.slice(1).join(" ") || (heroError ? "indisponível" : "anime…")}</em></h1>
+          <p className="hero-copy">{featured ? (featuredDetailPending ? "Carregando sinopse…" : translatedSynopsis.loading ? "Traduzindo sinopse…" : heroSynopsis) : (heroError ? "O site está aguardando a API de animes. Tente novamente em alguns instantes." : "Buscando os dados mais recentes dos animes…")}</p>
           <div className="button-row">
-            {featured ? <Link className="primary-button" href={`/anime/${featured.slug}`}>Saiba mais <span>↗</span></Link> : <button className="primary-button" onClick={feed.retry}>{feed.error ? "Tentar novamente" : "Carregando…"}</button>}
+            {featured ? <Link className="primary-button" href={`/anime/${featured.slug}`}>Saiba mais <span>↗</span></Link> : <button className="primary-button" onClick={() => { trendingFeed.retry(); feed.retry(); }}>{heroError ? "Tentar novamente" : "Carregando…"}</button>}
             <button className={`glass-button ${featuredEntry ? "selected" : ""}`} onClick={saveFeatured} disabled={!featured}>{featuredEntry ? "✓ Na sua lista" : "+ Quero assistir"}</button>
           </div>
           <div className="hero-meta">
@@ -709,7 +750,7 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
             <span><b>{featuredRating}</b> classificação indicativa</span>
           </div>
         </div>
-        <div className="hero-index"><span>01</span><i /><span>05</span></div>
+        {heroTotal > 0 && <div className="hero-index" aria-label={`Destaque ${heroIndex + 1} de ${heroTotal}`}><button type="button" onClick={() => moveHero(-1)} aria-label="Destaque anterior">↑</button><span>{String(heroIndex + 1).padStart(2, "0")}</span><i style={{ background: `linear-gradient(var(--accent) 0 ${((heroIndex + 1) / heroTotal) * 100}%, rgba(255,255,255,.2) ${((heroIndex + 1) / heroTotal) * 100}%)` }} /><span>{String(heroTotal).padStart(2, "0")}</span><button type="button" onClick={() => moveHero(1)} aria-label="Próximo destaque">↓</button></div>}
         <a href="#discover" className="scroll-cue">ROLE PARA DESCOBRIR <span>↓</span></a>
       </section>
 
@@ -731,7 +772,7 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
           })}</div>
         </section>}
 
-        {feed.loading ? <section className="carousel-section"><div className="section-heading"><div><p className="eyebrow">Com base na sua atividade</p><h2>Recomendados para você</h2></div></div><LoadingCards /></section> : feed.error ? <ApiError message={feed.error} retry={feed.retry} /> : <Carousel title="Recomendados para você" subtitle="Com base na sua atividade e no catálogo ao vivo" items={recommendations.length ? recommendations : feed.items.slice(0, 8)} />}
+        {recommendationFeed.loading ? <section className="carousel-section"><div className="section-heading"><div><p className="eyebrow">Uma seleção diferente a cada visita</p><h2>Recomendados para você</h2></div></div><LoadingCards /></section> : recommendationFeed.error ? <ApiError message={recommendationFeed.error} retry={recommendationFeed.retry} /> : <Carousel title="Recomendados para você" subtitle="Animes populares renovados a cada nova visita" items={recommendations.length ? recommendations : recommendationFeed.items.slice(0, 8)} />}
 
         <section className="collection-feature">
           <div className="section-heading">
@@ -750,10 +791,10 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
           </div> : <EmptyData label="A API não retornou animes para estas coleções." />}
         </section>
 
-        {feed.loading ? <section className="carousel-section"><div className="section-heading"><div><p className="eyebrow">O que a comunidade não para de comentar</p><h2>Em alta agora</h2></div></div><LoadingCards /></section> : !feed.error && <Carousel title="Em alta agora" subtitle="O que a comunidade não para de comentar" items={feed.items.slice(8, 16)} />}
+        {trendingFeed.loading ? <section className="carousel-section"><div className="section-heading"><div><p className="eyebrow">Em exibição e liderando em popularidade</p><h2>Em alta agora</h2></div></div><LoadingCards /></section> : trendingFeed.error ? <ApiError message={trendingFeed.error} retry={trendingFeed.retry} /> : <Carousel title="Em alta agora" subtitle="Animes em exibição ordenados pela popularidade" items={trendingFeed.items} />}
 
         <section className="popular-section">
-          <div className="section-heading"><div><p className="eyebrow">O cânone compartilhado</p><h2>Mais populares</h2></div><Link href="/catalog">Ver catálogo <span>↗</span></Link></div>
+          <div className="section-heading"><div><p className="eyebrow">Ranking geral da comunidade</p><h2>Mais populares</h2></div><Link href="/catalog">Ver catálogo <span>↗</span></Link></div>
           {feed.loading ? <LoadingCards count={12} grid /> : feed.error ? <ApiError message={feed.error} retry={feed.retry} compact /> : <div className="popular-grid">{feed.items.slice(0, 12).map((anime) => <AnimeCard anime={anime} key={anime.slug} compact />)}</div>}
           <Link href="/catalog" className="wide-button">Mostrar mais <span>↓</span></Link>
         </section>

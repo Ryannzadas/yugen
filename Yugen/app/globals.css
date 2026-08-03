@@ -185,6 +185,8 @@ h1 em, h2 em { color: var(--accent); font-weight: 400; }
 .hero-meta b { display: block; margin-bottom: 4px; color: #f0ece7; font-size: 13px; }
 .hero-index { position: absolute; z-index: 2; right: clamp(24px, 4vw, 64px); top: 45%; display: flex; flex-direction: column; align-items: center; gap: 12px; color: #ddd8d2; font-family: var(--font-display); font-size: 12px; }
 .hero-index i { width: 1px; height: 90px; background: linear-gradient(var(--accent) 0 20%, rgba(255,255,255,.2) 20%); }
+.hero-index button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 50%; background: rgba(8,8,10,.28); color: #ddd8d2; font-size: 13px; backdrop-filter: blur(8px); }
+.hero-index button:hover, .hero-index button:focus-visible { border-color: rgba(255,255,255,.35); background: rgba(8,8,10,.68); }
 .scroll-cue { position: absolute; z-index: 2; left: clamp(24px, 8vw, 120px); bottom: 22px; display: flex; gap: 18px; align-items: center; color: #777680; font-size: 9px; letter-spacing: .2em; }
 .scroll-cue span { color: var(--accent); font-size: 15px; }
 

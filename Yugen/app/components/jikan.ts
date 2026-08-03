@@ -94,7 +94,7 @@ export type AnimePageResult = {
 async function requestJikan<T>(path: string, signal?: AbortSignal): Promise<T> {
   let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(`${JIKAN_BASE}${path}`, { headers: { accept: "application/json" }, signal });
+    const response = await fetch(`${JIKAN_BASE}${path}`, { headers: { accept: "application/json" }, cache: "no-store", signal });
     if (response.ok) return response.json();
     lastStatus = response.status;
     if (response.status < 500 && response.status !== 429) break;
@@ -106,7 +106,7 @@ async function requestJikan<T>(path: string, signal?: AbortSignal): Promise<T> {
 async function requestShikimori<T>(path: string, signal?: AbortSignal): Promise<T> {
   let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(`${SHIKIMORI_BASE}/api${path}`, { headers: { accept: "application/json" }, signal });
+    const response = await fetch(`${SHIKIMORI_BASE}/api${path}`, { headers: { accept: "application/json" }, cache: "no-store", signal });
     if (response.ok) return response.json();
     lastStatus = response.status;
     if (response.status < 500 && response.status !== 429) break;
@@ -283,6 +283,29 @@ export async function fetchAnimePage(query: string, page = 1, limit = 25, signal
 export async function fetchAnimeList(query: string, limit: number, signal?: AbortSignal) {
   const result = await fetchAnimePage(query, 1, Math.min(limit, 25), signal);
   return result.items.slice(0, limit);
+}
+
+export type AnimeSelection = "popular" | "trending" | "recommended";
+
+export async function fetchAnimeSelection(selection: AnimeSelection, limit = 18, signal?: AbortSignal) {
+  const safeLimit = Math.max(1, Math.min(25, Math.floor(limit)));
+  const recommendationPage = 2 + Math.floor(Math.random() * 5);
+  const params = new URLSearchParams({
+    order: "popularity",
+    page: String(selection === "recommended" ? recommendationPage : 1),
+    limit: String(safeLimit),
+    censored: "true",
+  });
+  if (selection === "trending") params.set("status", "ongoing");
+
+  const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${params.toString()}`, signal);
+  const items = response.map(mapShikimoriAnime);
+  if (selection !== "recommended") return items;
+
+  return items
+    .map((anime) => ({ anime, order: Math.random() }))
+    .sort((a, b) => a.order - b.order)
+    .map(({ anime }) => anime);
 }
 
 export async function fetchAnimeDetail(id: number, signal?: AbortSignal) {
