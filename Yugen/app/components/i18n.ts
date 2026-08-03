@@ -141,7 +141,10 @@ function preserveSpacing(source: string, translated: string) {
   return `${leading}${translated}${trailing}`;
 }
 
-export function translateInterfaceText(source: string, language: Language) {
+export function translateInterfaceText(
+  source: string,
+  language: Language,
+): string {
   if (language === "pt") return source;
   const dictionary = dictionaries[language];
   const trimmed = source.trim();
