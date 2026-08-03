@@ -8,6 +8,7 @@ Catálogo e wiki social de animes em Next.js, com dados públicos da Jikan, bibl
 - PostgreSQL no Neon
 - Drizzle ORM
 - Auth.js com email/senha e OAuth opcional (Google e Apple)
+- Vercel Blob para avatar e banner do perfil
 - Deploy no Vercel
 
 ## Executar localmente
@@ -40,6 +41,16 @@ O site fica disponível em `http://localhost:3000`.
 6. Faça um novo deploy no Vercel.
 
 O diretório raiz do projeto no Vercel deve ser o diretório que contém este `package.json`. Se o GitHub mantiver a pasta `Yugen`, use **Root Directory: `Yugen`**.
+
+## Configurar avatar e banner no Vercel
+
+1. No projeto do Vercel, abra **Storage**.
+2. Clique em **Create Database** e selecione **Blob**.
+3. Crie o armazenamento e conecte-o ao projeto Yugen.
+4. Confirme em **Settings → Environment Variables** que `BLOB_READ_WRITE_TOKEN` foi criado.
+5. Faça um novo deploy.
+
+O upload aceita JPG, PNG, WebP ou GIF de até 5 MB. A URL pública é salva no Neon e aparece no cabeçalho, no perfil e nas discussões.
 
 ## Login com Google (opcional)
 
@@ -83,4 +94,4 @@ npm run db:push      # sincronização direta para desenvolvimento
 
 ## Dados de animes
 
-Os títulos, imagens, sinopses, trailers, personagens, equipe e músicas-tema vêm da API pública da Jikan/MyAnimeList. Dados pessoais, biblioteca e discussões ficam no PostgreSQL do projeto.
+Os títulos, imagens, sinopses, trailers, personagens, equipe e músicas-tema vêm da API pública da Jikan/MyAnimeList. O catálogo usa paginação: **Carregar mais animes** continua percorrendo todos os resultados disponíveis sem tentar baixar a base inteira de uma só vez. Dados pessoais, biblioteca e discussões ficam no PostgreSQL do projeto.

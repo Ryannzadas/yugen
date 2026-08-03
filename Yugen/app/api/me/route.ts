@@ -1,10 +1,48 @@
 import { getSessionIdentity } from "../../session-auth";
+import { eq } from "drizzle-orm";
+import { getDb } from "../../../db";
+import { users } from "../../../db/schema";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const user = await getSessionIdentity();
-  return Response.json({
-    user: user ? { displayName: user.displayName, email: user.email } : null,
-  });
+  const identity = await getSessionIdentity();
+  if (!identity) return Response.json({ user: null });
+
+  try {
+    const db = await getDb();
+    const [profile] = await db.select({
+      username: users.username,
+      displayName: users.displayName,
+      email: users.email,
+      avatarUrl: users.avatarUrl,
+      bannerUrl: users.bannerUrl,
+      bio: users.bio,
+    }).from(users).where(eq(users.email, identity.email.toLowerCase())).limit(1);
+
+    return Response.json({
+      user: profile ? {
+        ...profile,
+        displayName: profile.displayName || profile.username,
+      } : {
+        displayName: identity.displayName,
+        email: identity.email,
+        username: identity.email.split("@")[0],
+        avatarUrl: null,
+        bannerUrl: null,
+        bio: "",
+      },
+    });
+  } catch {
+    return Response.json({
+      user: {
+        displayName: identity.displayName,
+        email: identity.email,
+        username: identity.email.split("@")[0],
+        avatarUrl: null,
+        bannerUrl: null,
+        bio: "",
+      },
+    });
+  }
 }

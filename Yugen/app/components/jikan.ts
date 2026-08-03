@@ -43,6 +43,24 @@ type JikanStaff = {
   person: { mal_id: number; name: string; images?: { jpg?: JikanImage } };
 };
 
+type JikanPagination = {
+  current_page?: number;
+  has_next_page?: boolean;
+  last_visible_page?: number;
+  items?: {
+    count?: number;
+    total?: number;
+    per_page?: number;
+  };
+};
+
+export type AnimePageResult = {
+  items: Anime[];
+  page: number;
+  hasNextPage: boolean;
+  total: number | null;
+};
+
 async function requestJikan<T>(path: string, signal?: AbortSignal): Promise<T> {
   let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -104,14 +122,7 @@ function mapAnime(anime: JikanAnime, index = 0): Anime {
   };
 }
 
-export async function fetchAnimeList(query: string, limit: number, signal?: AbortSignal) {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const endpoint = normalizedQuery
-    ? `/anime?q=${encodeURIComponent(query.trim())}&limit=${limit}&sfw=true`
-    : `/top/anime?filter=bypopularity&limit=${limit}`;
-  const response = await requestJikan<{ data?: JikanAnime[] }>(endpoint, signal);
-  const anime = (response.data ?? []).map(mapAnime);
-
+function sortSearchResults(anime: Anime[], normalizedQuery: string) {
   if (!normalizedQuery) return anime;
 
   return anime.sort((a, b) => {
@@ -124,6 +135,27 @@ export async function fetchAnimeList(query: string, limit: number, signal?: Abor
     };
     return relevance(a.title) - relevance(b.title) || b.rating - a.rating;
   });
+}
+
+export async function fetchAnimePage(query: string, page = 1, limit = 25, signal?: AbortSignal): Promise<AnimePageResult> {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const safePage = Math.max(1, Math.floor(page));
+  const safeLimit = Math.max(1, Math.min(25, Math.floor(limit)));
+  const endpoint = normalizedQuery
+    ? `/anime?q=${encodeURIComponent(query.trim())}&order_by=popularity&sort=asc&page=${safePage}&limit=${safeLimit}&sfw=true`
+    : `/anime?order_by=popularity&sort=asc&page=${safePage}&limit=${safeLimit}&sfw=true`;
+  const response = await requestJikan<{ data?: JikanAnime[]; pagination?: JikanPagination }>(endpoint, signal);
+  return {
+    items: sortSearchResults((response.data ?? []).map(mapAnime), normalizedQuery),
+    page: response.pagination?.current_page ?? safePage,
+    hasNextPage: Boolean(response.pagination?.has_next_page),
+    total: response.pagination?.items?.total ?? null,
+  };
+}
+
+export async function fetchAnimeList(query: string, limit: number, signal?: AbortSignal) {
+  const result = await fetchAnimePage(query, 1, Math.min(limit, 25), signal);
+  return result.items.slice(0, limit);
 }
 
 export async function fetchAnimeDetail(id: number, signal?: AbortSignal) {
