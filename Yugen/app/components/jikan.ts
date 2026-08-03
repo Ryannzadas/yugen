@@ -141,6 +141,21 @@ function shikimoriStatus(status?: string | null) {
   return "Unknown";
 }
 
+function shikimoriRating(rating?: string | null) {
+  const labels: Record<string, string> = {
+    none: "Not rated",
+    g: "G - All Ages",
+    pg: "PG - Children",
+    pg_13: "PG-13 - Teens 13 or older",
+    r: "R - 17+",
+    r_plus: "R+ - Mild Nudity",
+    rx: "Rx - Hentai",
+  };
+
+  if (!rating) return "Not rated";
+  return labels[rating.toLowerCase()] || rating.toUpperCase().replaceAll("_", "-");
+}
+
 function cleanShikimoriText(value?: string | null) {
   return value?.replace(/\[(?:character|anime|manga)=[^\]]+\]/g, "").replace(/\[\/[^\]]+\]/g, "").trim() || "Sinopse ainda não disponível.";
 }
@@ -169,7 +184,7 @@ function mapShikimoriAnime(anime: ShikimoriAnime, index = 0): Anime {
     format: shikimoriFormat(anime.kind),
     status: shikimoriStatus(anime.status),
     rating: Number(anime.score) || 0,
-    ratingLabel: anime.rating?.toUpperCase().replace("_", "-") || "Not rated",
+    ratingLabel: shikimoriRating(anime.rating),
     episodes: anime.episodes ?? null,
     duration: anime.duration ? `${anime.duration} min per ep` : "Unknown",
     aired: [anime.aired_on, anime.released_on].filter(Boolean).join(" to ") || "Unknown",

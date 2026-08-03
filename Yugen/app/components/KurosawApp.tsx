@@ -635,12 +635,42 @@ function Header({ theme, onTheme, onAuth, user, language, onLanguage }: { theme:
 
 function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth: (modal: Modal) => void; language: Language; user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary }) {
   const feed = useAnimeFeed("", 24);
-  const featured = feed.items[0];
+  const listedFeatured = feed.items[0];
+  const [featuredDetail, setFeaturedDetail] = useState<Anime | null>(null);
+  useEffect(() => {
+    if (!listedFeatured?.malId) return;
+
+    const controller = new AbortController();
+    fetchAnimeDetail(listedFeatured.malId, controller.signal)
+      .then((anime) => setFeaturedDetail(anime))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setFeaturedDetail(listedFeatured);
+      });
+
+    return () => controller.abort();
+  }, [listedFeatured?.malId]);
+  const featured =
+    featuredDetail?.slug === listedFeatured?.slug
+      ? { ...listedFeatured, ...featuredDetail }
+      : listedFeatured;
+  const featuredDetailPending = Boolean(listedFeatured && featuredDetail?.slug !== listedFeatured.slug);
   const featuredEntry = library.find((entry) => entry.slug === featured?.slug);
   const continueWatching = library.filter((entry) => entry.status === "watching" && entry.progressEpisodes > 0).slice(0, 6);
   const recommendations = feed.items.filter((anime) => !library.some((entry) => entry.slug === anime.slug)).slice(0, 8);
-  const featuredTitle = featured?.title.split(" ") || [];
+  const featuredTitle = featured?.title?.split(" ") || [];
   const translatedSynopsis = useTranslatedSynopsis(featured?.synopsis || featured?.blurb, language);
+  const heroSynopsis = useMemo(() => {
+    const text = translatedSynopsis.text.trim();
+    if (text.length <= 280) return text;
+    const excerpt = text.slice(0, 280);
+    const lastSpace = excerpt.lastIndexOf(" ");
+    return `${excerpt.slice(0, lastSpace > 210 ? lastSpace : 280).trimEnd()}…`;
+  }, [translatedSynopsis.text]);
+  const featuredRating =
+    !featuredDetailPending && featured?.ratingLabel && featured.ratingLabel !== "Not rated"
+      ? featured.ratingLabel.split(" ")[0]
+      : featuredDetailPending ? "…" : "—";
   async function saveFeatured() {
     if (!featured) return;
     if (!user) return openAuth("login");
@@ -654,7 +684,7 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
         <div className="hero-content">
           <p className="eyebrow"><span /> {feed.loading ? "Atualizando pela Jikan" : feed.error ? "API de animes indisponível" : "Destaque ao vivo · Jikan / MyAnimeList"}</p>
           <h1>{featuredTitle[0] || (feed.error ? "Catálogo" : "Carregando")}<br /><em>{featuredTitle.slice(1).join(" ") || (feed.error ? "indisponível" : "anime…")}</em></h1>
-          <p className="hero-copy">{featured ? (translatedSynopsis.loading ? "Traduzindo sinopse…" : translatedSynopsis.text) : (feed.error ? "O site está aguardando a API Jikan. Nenhum anime adicionado manualmente será exibido." : "Buscando os dados mais recentes dos animes…")}</p>
+          <p className="hero-copy">{featured ? (featuredDetailPending ? "Carregando sinopse…" : translatedSynopsis.loading ? "Traduzindo sinopse…" : heroSynopsis) : (feed.error ? "O site está aguardando a API Jikan. Nenhum anime adicionado manualmente será exibido." : "Buscando os dados mais recentes dos animes…")}</p>
           <div className="button-row">
             {featured ? <Link className="primary-button" href={`/anime/${featured.slug}`}>Saiba mais <span>↗</span></Link> : <button className="primary-button" onClick={feed.retry}>{feed.error ? "Tentar novamente" : "Carregando…"}</button>}
             <button className={`glass-button ${featuredEntry ? "selected" : ""}`} onClick={saveFeatured} disabled={!featured}>{featuredEntry ? "✓ Na sua lista" : "+ Quero assistir"}</button>
@@ -662,7 +692,7 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
           <div className="hero-meta">
             <span><b>{featured?.rating ? featured.rating.toFixed(2) : "—"}</b> nota da comunidade</span>
             <span><b>{featured?.episodes ?? "—"}</b> episódios</span>
-            <span><b>{featured?.ratingLabel?.split(" ")[0] || "—"}</b> classificação indicativa</span>
+            <span><b>{featuredRating}</b> classificação indicativa</span>
           </div>
         </div>
         <div className="hero-index"><span>01</span><i /><span>05</span></div>
