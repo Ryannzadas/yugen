@@ -18,6 +18,7 @@ export async function GET() {
       avatarUrl: users.avatarUrl,
       bannerUrl: users.bannerUrl,
       bio: users.bio,
+      role: users.role,
     }).from(users).where(eq(users.email, identity.email.toLowerCase())).limit(1);
 
     return Response.json({
@@ -31,6 +32,7 @@ export async function GET() {
         avatarUrl: null,
         bannerUrl: null,
         bio: "",
+        role: "member",
       },
     });
   } catch {
@@ -42,6 +44,7 @@ export async function GET() {
         avatarUrl: null,
         bannerUrl: null,
         bio: "",
+        role: "member",
       },
     });
   }

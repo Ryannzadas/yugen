@@ -6,7 +6,7 @@ import { newsItems, type Anime, type CharacterDetail } from "./data";
 import { fetchAnimeCharacters, fetchAnimeDetail, fetchAnimeList, fetchAnimePage, fetchAnimeSelection, fetchAnimeStaff, fetchCharacterDetail, fetchSeasonNow, type AnimeSelection } from "./jikan";
 import { languageOptions, observeDocumentLanguage, type Language } from "./i18n";
 
-type View = "home" | "catalog" | "anime" | "calendar" | "character" | "collections" | "discussions" | "news" | "article" | "profile" | "public-profile" | "settings" | "blueprint";
+type View = "home" | "catalog" | "anime" | "calendar" | "character" | "collections" | "discussions" | "news" | "article" | "profile" | "public-profile" | "settings" | "moderation" | "blueprint";
 type Modal = "join" | "login" | "forgot" | "collection" | "create" | null;
 type SessionUser = {
   displayName: string;
@@ -15,6 +15,7 @@ type SessionUser = {
   avatarUrl?: string | null;
   bannerUrl?: string | null;
   bio?: string;
+  role?: "member" | "moderator" | "admin";
 };
 type SynopsisTranslation = { text: string; loading: boolean; error: boolean };
 type LibraryStatus = "watching" | "to_watch" | "watched";
@@ -76,6 +77,33 @@ type PublicProfileData = {
   reviews: Array<{ id: string; animeSlug: string; animeTitle: string; title: string; body: string; score: number; spoiler: boolean; helpfulCount: number; createdAt: string }>;
   posts: Array<{ id: string; body: string; createdAt: string; likeCount: number; animeSlug: string; animeTitle: string; episodeNumber?: number | null }>;
 };
+type WikiChanges = Partial<{
+  title: string;
+  titleJapanese: string;
+  synopsis: string;
+  format: string;
+  episodes: number | null;
+  season: string;
+  year: number | null;
+  status: string;
+}>;
+type WikiRevision = {
+  id: string;
+  editor: string;
+  editorDisplayName?: string | null;
+  editorAvatar?: string | null;
+  summary: string;
+  status: "pending" | "approved" | "rejected";
+  changes: WikiChanges;
+  previous: WikiChanges;
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
+  approvedAt?: string | null;
+  createdAt: string;
+  animeSlug?: string;
+  animeTitle?: string;
+  animePoster?: string | null;
+};
 
 function Link({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
   return <a href={href} {...props}>{children}</a>;
@@ -130,6 +158,22 @@ function ratingBadgePt(value: string | undefined) {
   if (translated.startsWith("R+")) return "R+ · 17 anos ou mais";
   if (translated.startsWith("R ·")) return "R · 17 anos ou mais";
   return translated;
+}
+
+function applyWikiChanges(anime: Anime, changes: WikiChanges): Anime {
+  const synopsis = changes.synopsis ?? anime.synopsis;
+  return {
+    ...anime,
+    title: changes.title ?? anime.title,
+    titleJapanese: changes.titleJapanese ?? anime.titleJapanese,
+    synopsis,
+    blurb: synopsis ?? anime.blurb,
+    format: changes.format ?? anime.format,
+    episodes: changes.episodes === undefined ? anime.episodes : changes.episodes,
+    season: changes.season ?? anime.season,
+    year: changes.year === undefined ? anime.year : changes.year ?? 0,
+    status: changes.status ?? anime.status,
+  };
 }
 
 const synopsisCache = new Map<string, string>();
@@ -770,6 +814,7 @@ function Header({ theme, onTheme, onAuth, user, language, onLanguage }: { theme:
             <div className="profile-menu-header"><span className={`mini-avatar ${user.avatarUrl ? "has-image" : ""}`} style={profileImageStyle(user.avatarUrl)}>{!user.avatarUrl && userInitials(user)}</span><div><b>{userLabel(user)}</b><small>{user.email}</small></div></div>
             <Link href="/profile" role="menuitem" onClick={() => setProfileOpen(false)}><span>◎</span> Ver perfil</Link>
             <Link href="/calendar" role="menuitem" onClick={() => setProfileOpen(false)}><span>◷</span> Calendário</Link>
+            {(user.role === "admin" || user.role === "moderator") && <Link href="/moderation" role="menuitem" onClick={() => setProfileOpen(false)}><span>◇</span> Moderação da Wiki</Link>}
             <Link href="/settings" role="menuitem" onClick={() => setProfileOpen(false)}><span>✎</span> Editar perfil</Link>
             <button type="button" className="profile-menu-action" role="menuitem" onClick={() => signOut({ redirectTo: "/" })}><span>↪</span> Sair</button>
           </div>}
@@ -1300,13 +1345,14 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
   const [remoteAnime, setRemoteAnime] = useState<Anime | null>(null);
   const [detailLoading, setDetailLoading] = useState(Boolean(remoteId));
   const [detailError, setDetailError] = useState("");
+  const [wikiOverrides, setWikiOverrides] = useState<WikiChanges>({});
   const [tab, setTab] = useState("Visão geral");
   const [libraryMessage, setLibraryMessage] = useState("");
   const [comments, setComments] = useState<Comment[]>([]);
   const [comment, setComment] = useState("");
   const [message, setMessage] = useState("");
   const [discussionEpisode, setDiscussionEpisode] = useState<number | null>(null);
-  const anime = remoteAnime ?? emptyAnime;
+  const anime = remoteAnime ? applyWikiChanges(remoteAnime, wikiOverrides) : emptyAnime;
   const libraryEntry = library.find((entry) => entry.slug === anime.slug);
   const watchState = libraryEntry?.status || "to_watch";
   const progress = libraryEntry?.progressEpisodes || 0;
@@ -1350,6 +1396,16 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
   }, [remoteId]);
 
   useEffect(() => {
+    if (!slug) return;
+    const controller = new AbortController();
+    fetch(`/api/wiki?anime=${encodeURIComponent(slug)}`, { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => setWikiOverrides(data?.approvedChanges || {}))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [slug]);
+
+  useEffect(() => {
     const animeSlug = slug || anime.slug;
     if (!animeSlug) return;
     const controller = new AbortController();
@@ -1388,9 +1444,10 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
     if (requestedTab === "discussions") setTab("Discussões");
     if (requestedTab === "reviews") setTab("Avaliações");
+    if (requestedTab === "wiki") setTab("Wiki");
   }, []);
 
-  const tabs = ["Visão geral", "Relações", "Personagens", "Equipe", "Músicas-tema", "Avaliações", "Discussões"];
+  const tabs = ["Visão geral", "Relações", "Personagens", "Equipe", "Músicas-tema", "Avaliações", "Discussões", "Wiki"];
 
   if (!remoteId) {
     return <main className="page-shell detail-error-page"><p className="eyebrow">Somente Jikan / MyAnimeList</p><h1>Anime não encontrado na API.</h1><p>Esta página antiga foi removida porque o Yugen agora exibe apenas animes retornados pela Jikan.</p><Link className="primary-button" href="/catalog">Abrir catálogo da API</Link></main>;
@@ -1435,6 +1492,7 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
         {tab === "Músicas-tema" && <ThemeMusicTab anime={anime} />}
         {tab === "Avaliações" && <ReviewsTab anime={anime} entry={libraryEntry} updateLibrary={updateLibrary} user={user} openAuth={() => openModal("login")} />}
         {tab === "Discussões" && <DiscussionTab comments={comments} comment={comment} setComment={setComment} submit={submitComment} onReply={publishComment} message={message} episodes={anime.episodes} episode={discussionEpisode} onEpisode={setDiscussionEpisode} />}
+        {tab === "Wiki" && <WikiTab anime={anime} user={user} openAuth={() => openModal("login")} onApprovedChanges={setWikiOverrides} />}
       </section>
     </main>
   );
@@ -1561,6 +1619,121 @@ function ReviewsTab({ anime, entry, updateLibrary, user, openAuth }: { anime: An
   return <section className="tab-panel reviews-panel"><p className="eyebrow">Análises aprofundadas</p><h2>Avaliações da comunidade</h2><form className="rating-composer" onSubmit={publish}><div><span>Sua nota para {anime.title}</span><div className="score-buttons">{Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <button type="button" className={score === value ? "active" : ""} onClick={() => chooseScore(value)} key={value}>{value}</button>)}</div></div><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Título da avaliação" minLength={3} maxLength={120} /><textarea value={review} onChange={(event) => setReview(event.target.value)} placeholder="Escreva uma avaliação sobre história, personagens, animação ou trilha sonora…" maxLength={4000} /><footer><label><input type="checkbox" checked={spoiler} onChange={(event) => setSpoiler(event.target.checked)} /> Contém spoiler</label><span>{review.length}/4000</span><button className="primary-button small" type="submit" disabled={submitting}>{submitting ? "Publicando…" : user ? "Publicar avaliação" : "Entrar para avaliar"}</button></footer></form>{notice && <button className="post-notice review-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}<div className="review-grid real-reviews">{loading ? <div className="social-empty"><span>◌</span><h3>Carregando avaliações</h3></div> : items.length ? items.map((item) => <CommunityReviewCard review={item} onHelpful={(selected) => updateReview(selected, "helpful")} onReport={(selected) => updateReview(selected, "report")} key={item.id} />) : <div className="social-empty"><span>○</span><h3>Ainda não há avaliações</h3><p>Publique a primeira avaliação real deste anime.</p></div>}</div></section>;
 }
 
+const wikiFieldLabels: Record<string, string> = {
+  title: "Título",
+  titleJapanese: "Título em japonês",
+  synopsis: "Sinopse",
+  format: "Formato",
+  episodes: "Episódios",
+  season: "Temporada",
+  year: "Ano",
+  status: "Status de exibição",
+};
+
+function wikiValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "Não informado";
+  return String(value);
+}
+
+function WikiRevisionCard({ revision, canModerate, onModerate }: { revision: WikiRevision; canModerate: boolean; onModerate: (revision: WikiRevision, action: "approve" | "reject") => void }) {
+  const changes = Object.entries(revision.changes);
+  return <article className="wiki-revision-card"><header><Link href={`/user/${encodeURIComponent(revision.editor)}`} className="review-author"><div className="avatar has-image" style={profileImageStyle(revision.editorAvatar)}>{!revision.editorAvatar && revision.editor.slice(0, 2).toUpperCase()}</div><div><b>{revision.editorDisplayName || `@${revision.editor}`}</b><small>@{revision.editor} · {discussionTime(revision.createdAt)}</small></div></Link><span className={`wiki-status ${revision.status}`}>{revision.status === "approved" ? "Aprovada" : revision.status === "rejected" ? "Rejeitada" : "Em análise"}</span></header><h3>{revision.summary}</h3><div className="wiki-diff-list">{changes.map(([field, next]) => <div key={field}><span>{wikiFieldLabels[field] || field}</span><del>{wikiValue(revision.previous[field as keyof WikiChanges])}</del><b>{wikiValue(next)}</b></div>)}</div>{revision.reviewNote && <p className="wiki-review-note"><b>Nota da moderação:</b> {revision.reviewNote}</p>}{canModerate && revision.status === "pending" && <footer><button className="ghost-button" onClick={() => onModerate(revision, "reject")}>Rejeitar</button><button className="primary-button small" onClick={() => onModerate(revision, "approve")}>Aprovar alteração</button></footer>}</article>;
+}
+
+function WikiTab({ anime, user, openAuth, onApprovedChanges }: { anime: Anime; user: SessionUser | null | undefined; openAuth: () => void; onApprovedChanges: (changes: WikiChanges) => void }) {
+  const [title, setTitle] = useState(anime.title);
+  const [titleJapanese, setTitleJapanese] = useState(anime.titleJapanese || "");
+  const [synopsis, setSynopsis] = useState(anime.synopsis || anime.blurb || "");
+  const [format, setFormat] = useState(anime.format || "TV");
+  const [episodes, setEpisodes] = useState(anime.episodes ? String(anime.episodes) : "");
+  const [season, setSeason] = useState(anime.season || "Unknown");
+  const [year, setYear] = useState(anime.year ? String(anime.year) : "");
+  const [status, setStatus] = useState(anime.status || "Unknown");
+  const [summary, setSummary] = useState("");
+  const [revisions, setRevisions] = useState<WikiRevision[]>([]);
+  const [canModerate, setCanModerate] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    setTitle(anime.title);
+    setTitleJapanese(anime.titleJapanese || "");
+    setSynopsis(anime.synopsis || anime.blurb || "");
+    setFormat(anime.format || "TV");
+    setEpisodes(anime.episodes ? String(anime.episodes) : "");
+    setSeason(anime.season || "Unknown");
+    setYear(anime.year ? String(anime.year) : "");
+    setStatus(anime.status || "Unknown");
+  }, [anime.slug, anime.title, anime.titleJapanese, anime.synopsis, anime.blurb, anime.format, anime.episodes, anime.season, anime.year, anime.status]);
+
+  async function loadHistory() {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/wiki?anime=${encodeURIComponent(anime.slug)}`, { cache: "no-store" });
+      const data = await response.json() as { revisions?: WikiRevision[]; approvedChanges?: WikiChanges; canModerate?: boolean; error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível carregar o histórico.");
+      setRevisions(data.revisions || []);
+      setCanModerate(Boolean(data.canModerate));
+      onApprovedChanges(data.approvedChanges || {});
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Não foi possível carregar o histórico.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadHistory(); }, [anime.slug]);
+
+  async function submitRevision(event: FormEvent) {
+    event.preventDefault();
+    if (!user) return openAuth();
+    const candidate: WikiChanges = {
+      title: title.trim(),
+      titleJapanese: titleJapanese.trim(),
+      synopsis: synopsis.trim(),
+      format,
+      episodes: episodes ? Number(episodes) : null,
+      season,
+      year: year ? Number(year) : null,
+      status,
+    };
+    const current: WikiChanges = { title: anime.title, titleJapanese: anime.titleJapanese || "", synopsis: anime.synopsis || anime.blurb || "", format: anime.format, episodes: anime.episodes ?? null, season: anime.season, year: anime.year || null, status: anime.status };
+    const changes = Object.fromEntries(Object.entries(candidate).filter(([field, value]) => value !== current[field as keyof WikiChanges])) as WikiChanges;
+    if (!Object.keys(changes).length) return setNotice("Altere pelo menos um campo antes de enviar.");
+    setSubmitting(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/wiki", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anime: { slug: anime.slug, title: anime.title, titleJapanese: anime.titleJapanese, synopsis: anime.synopsis || anime.blurb, format: anime.format, episodes: anime.episodes ?? null, season: anime.season, year: anime.year || null, status: anime.status, image: anime.image || null }, changes, summary }) });
+      const data = await response.json() as { revision?: WikiRevision; error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível enviar a sugestão.");
+      setSummary("");
+      setNotice("Sugestão enviada para a fila de moderação.");
+      await loadHistory();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Não foi possível enviar a sugestão.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function moderate(revision: WikiRevision, action: "approve" | "reject") {
+    const note = action === "reject" ? window.prompt("Explique por que esta alteração foi rejeitada:") : "";
+    if (action === "reject" && note === null) return;
+    try {
+      const response = await fetch("/api/wiki", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ revisionId: revision.id, action, note }) });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível moderar a alteração.");
+      setNotice(action === "approve" ? "Alteração aprovada e publicada." : "Alteração rejeitada.");
+      await loadHistory();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Não foi possível moderar a alteração.");
+    }
+  }
+
+  return <section className="tab-panel wiki-panel"><div className="wiki-intro"><div><p className="eyebrow">Conhecimento construído pela comunidade</p><h2>Wiki colaborativa</h2><p>Use os dados da Jikan como base e sugira correções. Nada é publicado antes da análise de um moderador.</p></div>{canModerate && <Link className="ghost-button" href="/moderation">Abrir fila de moderação ↗</Link>}</div><div className="wiki-layout"><form className="wiki-editor" onSubmit={submitRevision}><p className="eyebrow">Sugerir uma correção</p><div className="wiki-field-grid"><label>Título<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} required /></label><label>Título em japonês<input value={titleJapanese} onChange={(event) => setTitleJapanese(event.target.value)} maxLength={200} /></label><label>Formato<select value={format} onChange={(event) => setFormat(event.target.value)}><option>TV</option><option>Movie</option><option>OVA</option><option>ONA</option><option>Special</option><option>Music</option></select></label><label>Episódios<input type="number" min="1" max="10000" value={episodes} onChange={(event) => setEpisodes(event.target.value)} /></label><label>Temporada<select value={season} onChange={(event) => setSeason(event.target.value)}><option value="Winter">Inverno</option><option value="Spring">Primavera</option><option value="Summer">Verão</option><option value="Fall">Outono</option><option value="Unknown">Não informada</option></select></label><label>Ano<input type="number" min="1900" max="2200" value={year} onChange={(event) => setYear(event.target.value)} /></label><label className="wide">Status de exibição<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="Currently Airing">Em exibição</option><option value="Finished Airing">Exibição finalizada</option><option value="Not yet aired">Ainda não exibido</option><option value="Unknown">Não informado</option></select></label><label className="wide">Sinopse<textarea value={synopsis} onChange={(event) => setSynopsis(event.target.value)} maxLength={10000} required /></label><label className="wide">Resumo da alteração<textarea value={summary} onChange={(event) => setSummary(event.target.value)} minLength={10} maxLength={300} placeholder="Explique o que foi corrigido e, se possível, informe a fonte." required /></label></div><footer><span>{user ? `Enviando como @${user.username || userLabel(user)}` : "Entre para colaborar com a Wiki."}</span><button className="primary-button small" type="submit" disabled={submitting}>{submitting ? "Enviando…" : user ? "Enviar para análise" : "Entrar para editar"}</button></footer></form><aside className="wiki-guidelines"><p className="eyebrow">Antes de enviar</p><h3>Boas edições são verificáveis.</h3><ol><li>Corrija somente informações objetivas.</li><li>Explique claramente o motivo da mudança.</li><li>Evite opiniões, spoilers e textos copiados integralmente.</li><li>Uma edição aprovada aparece para todos, mas a Jikan continua indicada como fonte original.</li></ol></aside></div>{notice && <button className="post-notice wiki-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}<section className="wiki-history"><div className="section-heading"><div><p className="eyebrow">Transparência editorial</p><h2>Histórico de alterações</h2></div><span>{revisions.length} revisões</span></div>{loading ? <div className="social-empty"><span>◌</span><h3>Carregando histórico</h3></div> : revisions.length ? <div className="wiki-revision-list">{revisions.map((revision) => <WikiRevisionCard revision={revision} canModerate={canModerate} onModerate={moderate} key={revision.id} />)}</div> : <EmptyData label="Nenhuma correção foi sugerida para este anime." />}</section></section>;
+}
+
 function DiscussionTab({ comments, comment, setComment, submit, onReply, message, episodes, episode, onEpisode }: { comments: Comment[]; comment: string; setComment: (value: string) => void; submit: (event: FormEvent) => void; onReply: (body: string, parentId?: string | null) => Promise<boolean>; message: string; episodes?: number | null; episode: number | null; onEpisode: (episode: number | null) => void }) {
   const rootComments = comments.filter((item) => !item.parentId);
   const totalEpisodes = Math.max(0, episodes || 0);
@@ -1654,7 +1827,7 @@ type SocialSection = "feed" | "explore" | "notifications";
 
 type SocialNotification = {
   id: string;
-  type: "reply" | "like" | "follow";
+  type: "reply" | "like" | "follow" | "wiki";
   actor: string;
   actorAvatar?: string | null;
   title: string;
@@ -1911,7 +2084,7 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
 
           {section === "explore" && <section className="section-panel explore-panel"><div className="panel-intro"><p className="eyebrow">Encontre uma conversa real</p><h2>Explore a comunidade.</h2><p>Pesquise nas publicações que já foram registradas no Yugen.</p></div><label className="explore-search"><span>⌕</span><input value={exploreQuery} onChange={(event) => setExploreQuery(event.target.value)} placeholder="Pesquisar autor, anime ou texto" /></label><div className="timeline explore-results">{explorePosts.length ? explorePosts.map(renderPost) : <div className="social-empty"><span>⌕</span><h3>Nenhuma discussão encontrada</h3><p>Tente outra busca.</p></div>}</div></section>}
 
-          {section === "notifications" && <section className="section-panel notifications-panel"><div className="panel-intro split-panel"><div><p className="eyebrow">Atividade real da sua conta</p><h2>Notificações.</h2><p>Respostas, curtidas e novos seguidores aparecem aqui quando acontecerem.</p></div>{user && <button className="ghost-button" type="button" onClick={loadNotifications} disabled={notificationsLoading}>↻ Atualizar</button>}</div>{!user ? <div className="social-empty"><span>♧</span><h3>Entre para ver suas notificações</h3><p>O Yugen mostrará somente atividades reais relacionadas à sua conta.</p><Link className="primary-button small" href="/api/auth/signin?callbackUrl=/discussions">Entrar</Link></div> : notificationsLoading ? <div className="social-empty"><span>◌</span><h3>Carregando notificações</h3></div> : notificationsError ? <div className="social-empty"><span>!</span><h3>Não foi possível atualizar</h3><p>{notificationsError}</p><button className="ghost-button" onClick={loadNotifications}>Tentar novamente</button></div> : notifications.length ? <div className="notification-list">{notifications.map((notification) => <Link className="notification-item" href={notification.animeSlug ? `/anime/${notification.animeSlug}?tab=discussions` : "/discussions"} key={notification.id}><span className="notification-icon">{notification.type === "reply" ? "↩" : notification.type === "like" ? "♡" : "+"}</span><div><b>{notification.title}</b><p>{notification.description}</p><small>{notification.animeTitle ? `${notification.animeTitle} · ` : ""}{discussionTime(notification.createdAt)}</small></div></Link>)}</div> : <div className="social-empty"><span>♧</span><h3>Nenhuma notificação ainda</h3><p>Quando alguém responder, curtir ou seguir você, a atividade aparecerá aqui.</p></div>}</section>}
+          {section === "notifications" && <section className="section-panel notifications-panel"><div className="panel-intro split-panel"><div><p className="eyebrow">Atividade real da sua conta</p><h2>Notificações.</h2><p>Respostas, curtidas, seguidores e decisões da Wiki aparecem aqui quando acontecerem.</p></div>{user && <button className="ghost-button" type="button" onClick={loadNotifications} disabled={notificationsLoading}>↻ Atualizar</button>}</div>{!user ? <div className="social-empty"><span>♧</span><h3>Entre para ver suas notificações</h3><p>O Yugen mostrará somente atividades reais relacionadas à sua conta.</p><Link className="primary-button small" href="/api/auth/signin?callbackUrl=/discussions">Entrar</Link></div> : notificationsLoading ? <div className="social-empty"><span>◌</span><h3>Carregando notificações</h3></div> : notificationsError ? <div className="social-empty"><span>!</span><h3>Não foi possível atualizar</h3><p>{notificationsError}</p><button className="ghost-button" onClick={loadNotifications}>Tentar novamente</button></div> : notifications.length ? <div className="notification-list">{notifications.map((notification) => <Link className="notification-item" href={notification.animeSlug ? `/anime/${notification.animeSlug}?tab=${notification.type === "wiki" ? "wiki" : "discussions"}` : "/discussions"} key={notification.id}><span className="notification-icon">{notification.type === "reply" ? "↩" : notification.type === "like" ? "♡" : notification.type === "wiki" ? "◇" : "+"}</span><div><b>{notification.title}</b><p>{notification.description}</p><small>{notification.animeTitle ? `${notification.animeTitle} · ` : ""}{discussionTime(notification.createdAt)}</small></div></Link>)}</div> : <div className="social-empty"><span>♧</span><h3>Nenhuma notificação ainda</h3><p>Quando alguém responder, curtir, seguir você ou analisar sua edição, a atividade aparecerá aqui.</p></div>}</section>}
         </section>
 
         <aside className="social-rail">
@@ -2066,6 +2239,54 @@ function SettingsView({ user, onUserChange }: { user: SessionUser | null | undef
   }
 
   return <main className="settings-page page-shell"><header className="page-title"><p className="eyebrow">Seu espaço</p><h1>Configurações<br /><em>da conta.</em></h1></header><div className="settings-layout"><aside><a href="#profile" className="active">Perfil</a><a href="#account">Conta</a><a href="#imports">Importações</a><a href="#danger">Zona de perigo</a></aside><section><div id="profile" className="setting-group"><p className="eyebrow">Identidade pública</p><h2>Perfil</h2>{activeUser.bannerUrl && <div className="settings-banner-preview" style={profileImageStyle(activeUser.bannerUrl)} role="img" aria-label="Banner atual" />}<div className="media-edit"><div className={`profile-avatar ${activeUser.avatarUrl ? "has-image" : ""}`} style={profileImageStyle(activeUser.avatarUrl)}>{!activeUser.avatarUrl && userInitials(activeUser)}</div><input ref={avatarInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => uploadProfileImage("avatar", event.target.files?.[0])} /><button className="ghost-button" type="button" onClick={() => avatarInput.current?.click()} disabled={Boolean(uploading)}>{uploading === "avatar" ? "Enviando…" : "Alterar avatar"}</button><input ref={bannerInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => uploadProfileImage("banner", event.target.files?.[0])} /><button className="ghost-button" type="button" onClick={() => bannerInput.current?.click()} disabled={Boolean(uploading)}>{uploading === "banner" ? "Enviando…" : "Alterar banner"}</button></div>{uploadStatus && <p className="upload-status" role="status">{uploadStatus}</p>}<small className="media-note">JPG, PNG, WebP ou GIF, com até 5 MB.</small><label>Nome de usuário<input value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Biografia<textarea defaultValue={activeUser.bio || ""} placeholder="Conte um pouco sobre você." /></label></div><div id="account" className="setting-group"><p className="eyebrow">Dados privados</p><h2>Conta</h2><label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" /></label><label>Senha atual<input placeholder="••••••••" type="password" /></label><label>Nova senha<input placeholder="Pelo menos 12 caracteres" type="password" /></label><button className="primary-button" onClick={() => setSaved(true)}>{saved ? "✓ Alterações salvas" : "Salvar alterações"}</button></div><div id="imports" className="setting-group import-row"><div><p className="eyebrow">Traga seu histórico</p><h2>MyAnimeList</h2><p>Importe títulos concluídos, notas e status. Nada será alterado na fonte original.</p></div><button className="glass-button">Importar do MyAnimeList ↗</button></div><div id="danger" className="setting-group danger"><p className="eyebrow">Zona de perigo</p><h2>Excluir conta</h2><p>Isso remove permanentemente seu perfil, listas, coleções, avaliações e comentários após um prazo de recuperação de 14 dias.</p>{danger ? <div className="danger-confirm"><span>Digite EXCLUIR no fluxo final de produção.</span><button onClick={() => setDanger(false)}>Cancelar</button></div> : <button onClick={() => setDanger(true)}>Excluir conta</button>}</div></section></div></main>;
+}
+
+function ModerationRevisionCard({ revision, onDone }: { revision: WikiRevision; onDone: (id: string) => void }) {
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+  const [error, setError] = useState("");
+
+  async function act(action: "approve" | "reject") {
+    if (action === "reject" && note.trim().length < 5) return setError("Explique o motivo da rejeição usando pelo menos 5 caracteres.");
+    setBusy(action);
+    setError("");
+    try {
+      const response = await fetch("/api/wiki", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ revisionId: revision.id, action, note }) });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível analisar esta alteração.");
+      onDone(revision.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível analisar esta alteração.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return <article className="moderation-card"><div className="moderation-anime"><div className="moderation-poster" style={revision.animePoster ? { backgroundImage: `url(${revision.animePoster})` } : undefined} /><div><span>Revisão de anime</span><h2>{revision.animeTitle}</h2><Link href={`/anime/${revision.animeSlug}?tab=wiki`}>Abrir página do anime ↗</Link></div></div><header><Link href={`/user/${encodeURIComponent(revision.editor)}`} className="review-author"><div className="avatar has-image" style={profileImageStyle(revision.editorAvatar)}>{!revision.editorAvatar && revision.editor.slice(0, 2).toUpperCase()}</div><div><b>{revision.editorDisplayName || `@${revision.editor}`}</b><small>@{revision.editor} · {discussionTime(revision.createdAt)}</small></div></Link><span className="wiki-status pending">Em análise</span></header><h3>{revision.summary}</h3><div className="wiki-diff-list">{Object.entries(revision.changes).map(([field, next]) => <div key={field}><span>{wikiFieldLabels[field] || field}</span><del>{wikiValue(revision.previous[field as keyof WikiChanges])}</del><b>{wikiValue(next)}</b></div>)}</div><label className="moderation-note">Nota da moderação<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Opcional ao aprovar; obrigatória ao rejeitar." /></label>{error && <p className="moderation-error">{error}</p>}<footer><button className="ghost-button" onClick={() => act("reject")} disabled={Boolean(busy)}>{busy === "reject" ? "Rejeitando…" : "Rejeitar"}</button><button className="primary-button small" onClick={() => act("approve")} disabled={Boolean(busy)}>{busy === "approve" ? "Publicando…" : "Aprovar e publicar"}</button></footer></article>;
+}
+
+function ModerationView({ user }: { user: SessionUser | null | undefined }) {
+  const [items, setItems] = useState<WikiRevision[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function loadQueue() {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/wiki?mode=moderation", { cache: "no-store" });
+      const data = await response.json() as { revisions?: WikiRevision[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível carregar a moderação.");
+      setItems(data.revisions || []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível carregar a moderação.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { if (user !== undefined) loadQueue(); }, [user?.email]);
+  return <main className="moderation-page page-shell"><header className="page-title split"><div><p className="eyebrow">Controle editorial</p><h1>Moderação<br /><em>da Wiki.</em></h1><p>Compare cada proposta com o dado atual antes de publicar para toda a comunidade.</p></div>{(user?.role === "admin" || user?.role === "moderator") && <button className="ghost-button" onClick={loadQueue} disabled={loading}>↻ Atualizar fila</button>}</header>{loading ? <div className="social-empty"><span>◌</span><h2>Carregando revisões</h2></div> : error ? <div className="social-empty"><span>!</span><h2>Acesso indisponível</h2><p>{error}</p>{!user && <Link className="primary-button small" href="/api/auth/signin?callbackUrl=/moderation">Entrar</Link>}</div> : items.length ? <section className="moderation-list">{items.map((revision) => <ModerationRevisionCard revision={revision} onDone={(id) => setItems((current) => current.filter((item) => item.id !== id))} key={revision.id} />)}</section> : <div className="social-empty moderation-empty"><span>✓</span><h2>Fila de moderação vazia</h2><p>Não há sugestões aguardando análise.</p></div>}</main>;
 }
 
 function BlueprintView() {
@@ -2244,5 +2465,5 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
     setCollectionAnime(anime);
     setModal("collection");
   }
-  return <div className={`site ${theme}`}><Header theme={theme} onTheme={toggleTheme} onAuth={setModal} user={user} language={language} onLanguage={changeLanguage} />{view === "home" && <HomeView openAuth={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "catalog" && <CatalogView />}{view === "anime" && <AnimeView slug={slug} openModal={setModal} openCollection={openCollection} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "calendar" && <CalendarView user={user} library={library} saveLibrary={saveLibrary} openAuth={setModal} />}{view === "character" && <CharacterView slug={slug} />}{view === "collections" && <CollectionsView openModal={setModal} user={user} />}{view === "discussions" && <DiscussionsView user={user} />}{view === "news" && <NewsView />}{view === "article" && <ArticleView />}{view === "profile" && <ProfileView user={user} library={library} />}{view === "public-profile" && <PublicProfileView username={slug} user={user} />}{view === "settings" && <SettingsView user={user} onUserChange={setUser} />}{view === "blueprint" && <BlueprintView />}<Footer />{modal && ["join", "login", "forgot"].includes(modal) && <AuthModal type={modal as "join" | "login" | "forgot"} onClose={() => setModal(null)} switchTo={setModal} />}{modal && ["collection", "create"].includes(modal) && <CollectionModal type={modal as "collection" | "create"} onClose={() => setModal(null)} onSwitch={(type) => setModal(type)} anime={collectionAnime} />}</div>;
+  return <div className={`site ${theme}`}><Header theme={theme} onTheme={toggleTheme} onAuth={setModal} user={user} language={language} onLanguage={changeLanguage} />{view === "home" && <HomeView openAuth={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "catalog" && <CatalogView />}{view === "anime" && <AnimeView slug={slug} openModal={setModal} openCollection={openCollection} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "calendar" && <CalendarView user={user} library={library} saveLibrary={saveLibrary} openAuth={setModal} />}{view === "character" && <CharacterView slug={slug} />}{view === "collections" && <CollectionsView openModal={setModal} user={user} />}{view === "discussions" && <DiscussionsView user={user} />}{view === "news" && <NewsView />}{view === "article" && <ArticleView />}{view === "profile" && <ProfileView user={user} library={library} />}{view === "public-profile" && <PublicProfileView username={slug} user={user} />}{view === "settings" && <SettingsView user={user} onUserChange={setUser} />}{view === "moderation" && <ModerationView user={user} />}{view === "blueprint" && <BlueprintView />}<Footer />{modal && ["join", "login", "forgot"].includes(modal) && <AuthModal type={modal as "join" | "login" | "forgot"} onClose={() => setModal(null)} switchTo={setModal} />}{modal && ["collection", "create"].includes(modal) && <CollectionModal type={modal as "collection" | "create"} onClose={() => setModal(null)} onSwitch={(type) => setModal(type)} anime={collectionAnime} />}</div>;
 }

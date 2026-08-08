@@ -207,6 +207,13 @@ export const animeRevisions = pgTable("anime_revisions", {
   editorId: text("editor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   summary: text("summary").notNull(),
   snapshotJson: text("snapshot_json").notNull(),
+  status: text("status", { enum: ["pending", "approved", "rejected"] }).notNull().default("pending"),
+  reviewerId: text("reviewer_id").references(() => users.id, { onDelete: "set null" }),
+  reviewNote: text("review_note"),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true, mode: "string" }),
   approvedAt: timestamp("approved_at", { withTimezone: true, mode: "string" }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
-}, (table) => [index("anime_revisions_history_idx").on(table.animeId, table.createdAt)]);
+}, (table) => [
+  index("anime_revisions_history_idx").on(table.animeId, table.createdAt),
+  index("anime_revisions_moderation_idx").on(table.status, table.createdAt),
+]);

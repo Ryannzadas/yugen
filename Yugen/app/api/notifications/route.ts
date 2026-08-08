@@ -1,7 +1,7 @@
-import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { getDb } from "../../../db";
-import { animes, commentLikes, comments, discussions, follows, users } from "../../../db/schema";
+import { animes, animeRevisions, commentLikes, comments, discussions, follows, users } from "../../../db/schema";
 import { getSessionIdentity } from "../../session-auth";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +21,7 @@ export async function GET() {
     const likeAuthors = alias(users, "notification_like_authors");
     const followerUsers = alias(users, "notification_follower_users");
 
-    const [replyRows, likeRows, followRows] = await Promise.all([
+    const [replyRows, likeRows, followRows, revisionRows] = await Promise.all([
       db.select({
         id: comments.id,
         actor: replyAuthors.username,
@@ -65,6 +65,18 @@ export async function GET() {
         .where(and(eq(follows.followingId, currentUser.id), ne(follows.followerId, currentUser.id)))
         .orderBy(desc(follows.createdAt))
         .limit(50),
+      db.select({
+        id: animeRevisions.id,
+        status: animeRevisions.status,
+        reviewNote: animeRevisions.reviewNote,
+        createdAt: animeRevisions.reviewedAt,
+        animeSlug: animes.slug,
+        animeTitle: animes.title,
+      }).from(animeRevisions)
+        .innerJoin(animes, eq(animeRevisions.animeId, animes.id))
+        .where(and(eq(animeRevisions.editorId, currentUser.id), ne(animeRevisions.status, "pending"), isNotNull(animeRevisions.reviewedAt)))
+        .orderBy(desc(animeRevisions.reviewedAt))
+        .limit(50),
     ]);
 
     const notifications = [
@@ -100,6 +112,17 @@ export async function GET() {
         createdAt: row.createdAt,
         animeSlug: null,
         animeTitle: null,
+      })),
+      ...revisionRows.map((row) => ({
+        id: `wiki-${row.id}`,
+        type: "wiki" as const,
+        actor: "Yugen Wiki",
+        actorAvatar: null,
+        title: row.status === "approved" ? `Sua edição de ${row.animeTitle} foi aprovada` : `Sua edição de ${row.animeTitle} foi rejeitada`,
+        description: row.reviewNote || (row.status === "approved" ? "A correção já está publicada para toda a comunidade." : "Consulte o histórico da Wiki para revisar a decisão."),
+        createdAt: row.createdAt!,
+        animeSlug: row.animeSlug,
+        animeTitle: row.animeTitle,
       })),
     ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 100);
 
