@@ -1,4 +1,5 @@
-type TargetLanguage = "pt" | "es";
+type SourceLanguage = "en" | "ru";
+type TargetLanguage = "pt" | "es" | "en";
 
 const translationCache = new Map<string, string>();
 
@@ -26,8 +27,8 @@ function decodeEntities(text: string) {
     .replaceAll("&gt;", ">");
 }
 
-async function translateChunk(text: string, target: TargetLanguage) {
-  const params = new URLSearchParams({ q: text, langpair: `en|${target}` });
+async function translateChunk(text: string, source: SourceLanguage, target: TargetLanguage) {
+  const params = new URLSearchParams({ q: text, langpair: `${source}|${target}` });
   const response = await fetch(`https://api.mymemory.translated.net/get?${params.toString()}`, {
     headers: { accept: "application/json" },
   });
@@ -44,19 +45,22 @@ async function translateChunk(text: string, target: TargetLanguage) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { text?: string; target?: string };
+    const payload = await request.json() as { text?: string; source?: string; target?: string };
     const text = payload.text?.trim() || "";
+    const source = (payload.source || "en") as SourceLanguage;
     const target = payload.target as TargetLanguage;
     if (!text) return Response.json({ error: "text is required" }, { status: 400 });
-    if (!(["pt", "es"] as string[]).includes(target)) return Response.json({ error: "unsupported target language" }, { status: 400 });
+    if (!(["en", "ru"] as string[]).includes(source)) return Response.json({ error: "unsupported source language" }, { status: 400 });
+    if (!(["pt", "es", "en"] as string[]).includes(target)) return Response.json({ error: "unsupported target language" }, { status: 400 });
     if (text.length > 8000) return Response.json({ error: "text is too long" }, { status: 413 });
+    if (source === target) return Response.json({ text, cached: true });
 
-    const cacheKey = `${target}:${text}`;
+    const cacheKey = `${source}:${target}:${text}`;
     const cached = translationCache.get(cacheKey);
     if (cached) return Response.json({ text: cached, cached: true });
 
     const translatedChunks: string[] = [];
-    for (const chunk of splitText(text)) translatedChunks.push(await translateChunk(chunk, target));
+    for (const chunk of splitText(text)) translatedChunks.push(await translateChunk(chunk, source, target));
     const translated = translatedChunks.join(" ");
     translationCache.set(cacheKey, translated);
     return Response.json({ text: translated, cached: false });

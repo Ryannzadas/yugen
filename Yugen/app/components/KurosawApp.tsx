@@ -102,7 +102,12 @@ function ratingBadgePt(value: string | undefined) {
 }
 
 const synopsisCache = new Map<string, string>();
-const synopsisStorageKey = "yugen-synopsis-translations-v1";
+const synopsisStorageKey = "yugen-synopsis-translations-v2";
+type SynopsisSourceLanguage = "en" | "ru";
+
+function detectSynopsisLanguage(text: string): SynopsisSourceLanguage {
+  return /[\u0400-\u04ff]/.test(text) ? "ru" : "en";
+}
 
 function synopsisKey(text: string, language: Language) {
   let hash = 2166136261;
@@ -150,9 +155,9 @@ function decodeTranslationEntities(text: string) {
   return textarea.value;
 }
 
-async function translateSynopsisInBrowser(text: string, target: Exclude<Language, "en">, signal: AbortSignal) {
+async function translateSynopsisInBrowser(text: string, source: SynopsisSourceLanguage, target: Language, signal: AbortSignal) {
   const translateChunk = async (chunk: string) => {
-    const params = new URLSearchParams({ q: chunk, langpair: `en|${target}` });
+    const params = new URLSearchParams({ q: chunk, langpair: `${source}|${target}` });
     const requestController = new AbortController();
     const timeout = window.setTimeout(() => requestController.abort(), 12000);
     const abortRequest = () => requestController.abort();
@@ -177,7 +182,8 @@ function useTranslatedSynopsis(source: string | undefined, language: Language): 
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    if (!text || language === "en") {
+    const sourceLanguage = detectSynopsisLanguage(text);
+    if (!text || language === sourceLanguage) {
       const timer = window.setTimeout(() => {
         setTranslation(text);
         setLoading(false);
@@ -188,7 +194,7 @@ function useTranslatedSynopsis(source: string | undefined, language: Language): 
     const cacheKey = synopsisKey(text, language);
     const hasMalCredit = /\s*\[Written by MAL Rewrite\]\s*$/i.test(text);
     const translationSource = text.replace(/\s*\[Written by MAL Rewrite\]\s*$/i, "").trim();
-    const localizedCredit = hasMalCredit ? (language === "pt" ? " [Texto do MAL Rewrite]" : " [Texto de MAL Rewrite]") : "";
+    const localizedCredit = hasMalCredit ? (language === "pt" ? " [Texto do MAL Rewrite]" : language === "es" ? " [Texto de MAL Rewrite]" : " [Written by MAL Rewrite]") : "";
     const cached = synopsisCache.get(cacheKey) || readStoredSynopsis(cacheKey);
     if (cached) {
       const timer = window.setTimeout(() => {
@@ -204,12 +210,12 @@ function useTranslatedSynopsis(source: string | undefined, language: Language): 
       setLoading(true);
       setError(false);
     }, 0);
-    translateSynopsisInBrowser(translationSource, language, controller.signal)
+    translateSynopsisInBrowser(translationSource, sourceLanguage, language, controller.signal)
       .catch(async () => {
         const response = await fetch("/api/translate", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: translationSource, target: language }),
+          body: JSON.stringify({ text: translationSource, source: sourceLanguage, target: language }),
           signal: controller.signal,
         });
         const data = await response.json() as { text?: string; error?: string };
