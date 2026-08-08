@@ -102,7 +102,7 @@ function ratingBadgePt(value: string | undefined) {
 }
 
 const synopsisCache = new Map<string, string>();
-const synopsisStorageKey = "yugen-synopsis-translations-v2";
+const synopsisStorageKey = "yugen-synopsis-translations-v3";
 type SynopsisSourceLanguage = "en" | "ru";
 
 function detectSynopsisLanguage(text: string): SynopsisSourceLanguage {
@@ -157,21 +157,33 @@ function decodeTranslationEntities(text: string) {
 
 async function translateSynopsisInBrowser(text: string, source: SynopsisSourceLanguage, target: Language, signal: AbortSignal) {
   const translateChunk = async (chunk: string) => {
-    const params = new URLSearchParams({ q: chunk, langpair: `${source}|${target}` });
-    const requestController = new AbortController();
-    const timeout = window.setTimeout(() => requestController.abort(), 12000);
-    const abortRequest = () => requestController.abort();
-    signal.addEventListener("abort", abortRequest, { once: true });
-    const response = await fetch(`https://api.mymemory.translated.net/get?${params.toString()}`, { headers: { accept: "application/json" }, signal: requestController.signal }).finally(() => {
-      window.clearTimeout(timeout);
-      signal.removeEventListener("abort", abortRequest);
-    });
-    if (!response.ok) throw new Error(`Translation service returned ${response.status}`);
-    const data = await response.json() as { responseStatus?: number; responseDetails?: string; responseData?: { translatedText?: string } };
-    if (data.responseStatus !== 200 || !data.responseData?.translatedText) throw new Error(data.responseDetails || "Translation failed");
-    return decodeTranslationEntities(data.responseData.translatedText);
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      const params = new URLSearchParams({ q: chunk, langpair: `${source}|${target}` });
+      const requestController = new AbortController();
+      const timeout = window.setTimeout(() => requestController.abort(), 12000);
+      const abortRequest = () => requestController.abort();
+      signal.addEventListener("abort", abortRequest, { once: true });
+      try {
+        const response = await fetch(`https://api.mymemory.translated.net/get?${params.toString()}`, { headers: { accept: "application/json" }, signal: requestController.signal });
+        if (!response.ok) throw new Error(`Translation service returned ${response.status}`);
+        const data = await response.json() as { responseStatus?: number; responseDetails?: string; responseData?: { translatedText?: string } };
+        if (data.responseStatus !== 200 || !data.responseData?.translatedText) throw new Error(data.responseDetails || "Translation failed");
+        return decodeTranslationEntities(data.responseData.translatedText);
+      } catch (error) {
+        lastError = error;
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+        if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+      } finally {
+        window.clearTimeout(timeout);
+        signal.removeEventListener("abort", abortRequest);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Translation failed");
   };
-  const translated = await Promise.all(splitSynopsisText(text).map(translateChunk));
+  const translated: string[] = [];
+  for (const chunk of splitSynopsisText(text)) translated.push(await translateChunk(chunk));
   return translated.join(" ");
 }
 
@@ -210,18 +222,18 @@ function useTranslatedSynopsis(source: string | undefined, language: Language): 
       setLoading(true);
       setError(false);
     }, 0);
-    translateSynopsisInBrowser(translationSource, sourceLanguage, language, controller.signal)
-      .catch(async () => {
-        const response = await fetch("/api/translate", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: translationSource, source: sourceLanguage, target: language }),
-          signal: controller.signal,
-        });
+    fetch("/api/translate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: translationSource, source: sourceLanguage, target: language }),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
         const data = await response.json() as { text?: string; error?: string };
         if (!response.ok || !data.text) throw new Error(data.error || "Translation failed");
         return data.text;
       })
+      .catch(() => translateSynopsisInBrowser(translationSource, sourceLanguage, language, controller.signal))
       .then((translated) => {
         const finalTranslation = `${translated}${localizedCredit}`;
         synopsisCache.set(cacheKey, finalTranslation);

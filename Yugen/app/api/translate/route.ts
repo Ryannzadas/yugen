@@ -27,10 +27,11 @@ function decodeEntities(text: string) {
     .replaceAll("&gt;", ">");
 }
 
-async function translateChunk(text: string, source: SourceLanguage, target: TargetLanguage) {
+async function translateWithMyMemory(text: string, source: SourceLanguage, target: TargetLanguage) {
   const params = new URLSearchParams({ q: text, langpair: `${source}|${target}` });
   const response = await fetch(`https://api.mymemory.translated.net/get?${params.toString()}`, {
     headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(12000),
   });
   if (!response.ok) throw new Error(`Translation service returned ${response.status}`);
   const data = await response.json() as {
@@ -41,6 +42,36 @@ async function translateChunk(text: string, source: SourceLanguage, target: Targ
   const translated = data.responseData?.translatedText;
   if (data.responseStatus !== 200 || !translated) throw new Error(data.responseDetails || "Translation failed");
   return decodeEntities(translated);
+}
+
+async function translateWithGoogle(text: string, source: SourceLanguage, target: TargetLanguage) {
+  const params = new URLSearchParams({ client: "gtx", sl: source, tl: target, dt: "t", q: text });
+  const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params.toString()}`, {
+    headers: { accept: "application/json", "user-agent": "Yugen/1.0" },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!response.ok) throw new Error(`Secondary translation service returned ${response.status}`);
+  const data = await response.json() as Array<Array<Array<string | null>>>;
+  const translated = data[0]?.map((part) => part?.[0] || "").join("").trim();
+  if (!translated) throw new Error("Secondary translation service returned an empty result");
+  return translated;
+}
+
+async function translateChunk(text: string, source: SourceLanguage, target: TargetLanguage) {
+  try {
+    return await translateWithGoogle(text, source, target);
+  } catch {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await translateWithMyMemory(text, source, target);
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Translation failed");
+  }
 }
 
 export async function POST(request: Request) {
