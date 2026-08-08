@@ -34,11 +34,19 @@ const commentSelection = {
   animeSlug: animes.slug,
   animeTitle: animes.title,
   animePoster: animes.posterUrl,
+  discussionKind: discussions.kind,
+  episodeNumber: discussions.episodeNumber,
 };
 
 export async function GET(request: Request) {
   try {
-    const slug = new URL(request.url).searchParams.get("anime")?.trim();
+    const searchParams = new URL(request.url).searchParams;
+    const slug = searchParams.get("anime")?.trim();
+    const episodeParam = searchParams.get("episode");
+    const episodeNumber = episodeParam === null ? null : Math.max(1, Math.floor(Number(episodeParam)));
+    if (episodeParam !== null && !Number.isFinite(episodeNumber)) {
+      return Response.json({ error: "Episódio inválido." }, { status: 400 });
+    }
     const db = await getDb();
     const base = db.select(commentSelection).from(comments)
       .innerJoin(discussions, eq(comments.discussionId, discussions.id))
@@ -46,7 +54,12 @@ export async function GET(request: Request) {
       .innerJoin(users, eq(comments.authorId, users.id));
 
     const rows = slug
-      ? await base.where(and(eq(animes.slug, slug), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt)).limit(200)
+      ? await base.where(and(
+          eq(animes.slug, slug),
+          episodeNumber === null ? eq(discussions.kind, "general") : eq(discussions.kind, "episode"),
+          episodeNumber === null ? isNull(discussions.episodeNumber) : eq(discussions.episodeNumber, episodeNumber),
+          isNull(comments.deletedAt),
+        )).orderBy(asc(comments.createdAt)).limit(200)
       : await base.where(isNull(comments.deletedAt)).orderBy(desc(comments.createdAt)).limit(100);
 
     return Response.json({ comments: rows });
@@ -60,11 +73,13 @@ export async function POST(request: Request) {
     const context = await getOrCreateUser();
     if (!context) return Response.json({ error: "Entre na sua conta para participar da discussão." }, { status: 401 });
 
-    const payload = await request.json() as { animeSlug?: string; animeTitle?: string; animePoster?: string | null; body?: string; parentId?: string | null };
+    const payload = await request.json() as { animeSlug?: string; animeTitle?: string; animePoster?: string | null; body?: string; parentId?: string | null; episodeNumber?: number | null };
     const animeSlug = payload.animeSlug?.trim() ?? "";
     const body = payload.body?.trim() ?? "";
     if (!animeSlug || !body) return Response.json({ error: "Escolha um anime e escreva uma mensagem." }, { status: 400 });
     if (body.length > 4000) return Response.json({ error: "Os comentários podem ter no máximo 4.000 caracteres." }, { status: 400 });
+    const episodeNumber = payload.episodeNumber == null ? null : Math.max(1, Math.floor(Number(payload.episodeNumber)));
+    if (payload.episodeNumber != null && !Number.isFinite(episodeNumber)) return Response.json({ error: "Episódio inválido." }, { status: 400 });
 
     const { db, user } = context;
     const animeTitle = payload.animeTitle?.trim() || readableSlug(animeSlug);
@@ -80,9 +95,21 @@ export async function POST(request: Request) {
     });
     const [anime] = await db.select().from(animes).where(eq(animes.slug, animeSlug)).limit(1);
 
-    let [thread] = await db.select().from(discussions).where(and(eq(discussions.animeId, anime.id), eq(discussions.kind, "general"))).limit(1);
+    const discussionKind = episodeNumber === null ? "general" : "episode";
+    let [thread] = await db.select().from(discussions).where(and(
+      eq(discussions.animeId, anime.id),
+      eq(discussions.kind, discussionKind),
+      episodeNumber === null ? isNull(discussions.episodeNumber) : eq(discussions.episodeNumber, episodeNumber),
+    )).limit(1);
     if (!thread) {
-      const [created] = await db.insert(discussions).values({ id: crypto.randomUUID(), animeId: anime.id, authorId: user.id, title: `Discussão sobre ${animeTitle}`, kind: "general" }).returning();
+      const [created] = await db.insert(discussions).values({
+        id: crypto.randomUUID(),
+        animeId: anime.id,
+        authorId: user.id,
+        title: episodeNumber === null ? `Discussão sobre ${animeTitle}` : `${animeTitle} · Episódio ${episodeNumber}`,
+        kind: discussionKind,
+        episodeNumber,
+      }).returning();
       thread = created;
     }
 
@@ -104,6 +131,8 @@ export async function POST(request: Request) {
         animeSlug: anime.slug,
         animeTitle: anime.title,
         animePoster: anime.posterUrl,
+        discussionKind: thread.kind,
+        episodeNumber: thread.episodeNumber,
       },
     }, { status: 201 });
   } catch (error) {

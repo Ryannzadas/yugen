@@ -114,6 +114,16 @@ export const collectionItems = pgTable("collection_items", {
   index("collection_items_order_idx").on(table.collectionId, table.position),
 ]);
 
+export const collectionCollaborators = pgTable("collection_collaborators", {
+  collectionId: text("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["editor"] }).notNull().default("editor"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.collectionId, table.userId] }),
+  index("collection_collaborators_user_idx").on(table.userId),
+]);
+
 export const reviews = pgTable("reviews", {
   id: text("id").primaryKey(),
   animeId: text("anime_id").notNull().references(() => animes.id, { onDelete: "cascade" }),

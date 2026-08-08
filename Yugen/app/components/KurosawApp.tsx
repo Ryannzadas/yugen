@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState, type AnchorHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { signIn, signOut } from "next-auth/react";
-import { collections, newsItems, type Anime, type CharacterDetail } from "./data";
+import { newsItems, type Anime, type CharacterDetail } from "./data";
 import { fetchAnimeCharacters, fetchAnimeDetail, fetchAnimeList, fetchAnimePage, fetchAnimeSelection, fetchAnimeStaff, fetchCharacterDetail, fetchSeasonNow, type AnimeSelection } from "./jikan";
 import { languageOptions, observeDocumentLanguage, type Language } from "./i18n";
 
@@ -25,6 +25,7 @@ type LibraryEntry = {
   episodes?: number | null;
   year?: number | null;
   format?: string;
+  genres?: string[];
   status: LibraryStatus;
   progressEpisodes: number;
   score?: number | null;
@@ -33,6 +34,17 @@ type LibraryEntry = {
 };
 type LibraryPatch = Partial<Pick<LibraryEntry, "status" | "progressEpisodes" | "score" | "favorite">>;
 type SaveLibrary = (anime: Anime, patch: LibraryPatch) => Promise<void>;
+type CommunityCollection = {
+  id: string;
+  title: string;
+  description: string;
+  privacy: "public" | "private" | "unlisted";
+  createdAt: string;
+  owner: { username: string; displayName?: string | null };
+  collaborators: Array<{ username: string; displayName?: string | null; avatarUrl?: string | null }>;
+  canEdit: boolean;
+  items: Array<{ slug: string; title: string; image?: string | null; episodes?: number | null; year?: number | null; format?: string; season?: string | null; status?: string; rating?: number }>;
+};
 
 function Link({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
   return <a href={href} {...props}>{children}</a>;
@@ -249,6 +261,7 @@ function libraryPayload(anime: Anime) {
     format: anime.format,
     season: anime.season,
     status: anime.status,
+    genres: anime.genres || [anime.genre].filter(Boolean),
   };
 }
 
@@ -261,8 +274,24 @@ function animeFromLibrary(entry: LibraryEntry): Anime {
     year: entry.year || 0,
     format: entry.format || "TV",
     episodes: entry.episodes,
-    genre: "Anime",
+    genre: entry.genres?.[0] || "Anime",
+    genres: entry.genres || [],
     rating: entry.score || 0,
+  };
+}
+
+function animeFromCollectionItem(item: CommunityCollection["items"][number]): Anime {
+  return {
+    ...emptyAnime,
+    slug: item.slug,
+    title: item.title,
+    image: item.image || undefined,
+    year: item.year || 0,
+    format: item.format || "TV",
+    season: item.season || "Unknown",
+    status: item.status || "Unknown",
+    episodes: item.episodes,
+    rating: item.rating || 0,
   };
 }
 
@@ -343,6 +372,38 @@ function useAnimeSelection(selection: AnimeSelection, limit = 18) {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [selection, limit, reload]);
+
+  return { items, loading, error, retry: () => setReload((value) => value + 1) };
+}
+
+function useCommunityCollections() {
+  const [items, setItems] = useState<CommunityCollection[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setReload((value) => value + 1);
+    window.addEventListener("yugen:collections", refresh);
+    return () => window.removeEventListener("yugen:collections", refresh);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError("");
+    fetch("/api/collections", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as { collections?: CommunityCollection[]; error?: string };
+        if (!response.ok) throw new Error(data.error || "Não foi possível carregar as coleções.");
+        setItems(data.collections || []);
+      })
+      .catch((reason) => {
+        if (reason?.name !== "AbortError") setError(reason instanceof Error ? reason.message : "Não foi possível carregar as coleções.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [reload]);
 
   return { items, loading, error, retry: () => setReload((value) => value + 1) };
 }
@@ -672,7 +733,8 @@ function Header({ theme, onTheme, onAuth, user, language, onLanguage }: { theme:
 function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth: (modal: Modal) => void; language: Language; user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary }) {
   const feed = useAnimeSelection("popular", 24);
   const trendingFeed = useAnimeSelection("trending", 18);
-  const recommendationFeed = useAnimeSelection("recommended", 18);
+  const recommendationFeed = useAnimeSelection("recommended", 25);
+  const collectionFeed = useCommunityCollections();
   const heroItems = useMemo(() => trendingFeed.items.slice(0, 5), [trendingFeed.items]);
   const [heroIndex, setHeroIndex] = useState(0);
   useEffect(() => {
@@ -705,7 +767,28 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
   const featuredDetailPending = Boolean(listedFeatured && featuredDetail?.slug !== listedFeatured.slug);
   const featuredEntry = library.find((entry) => entry.slug === featured?.slug);
   const continueWatching = library.filter((entry) => entry.status === "watching" && entry.progressEpisodes > 0).slice(0, 6);
-  const recommendations = recommendationFeed.items.filter((anime) => !library.some((entry) => entry.slug === anime.slug)).slice(0, 8);
+  const tasteProfile = useMemo(() => {
+    const weights = new Map<string, number>();
+    library.forEach((entry) => {
+      const entryWeight = 1 + (entry.favorite ? 5 : 0) + (entry.status === "watched" ? 2 : entry.status === "watching" ? 1 : 0) + (entry.score && entry.score >= 7 ? entry.score - 6 : 0);
+      entry.genres?.forEach((genre) => weights.set(genre, (weights.get(genre) || 0) + entryWeight));
+    });
+    return weights;
+  }, [library]);
+  const favoriteGenres = useMemo(() => [...tasteProfile.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([genre]) => genre), [tasteProfile]);
+  const recommendations = useMemo(() => recommendationFeed.items
+    .filter((anime) => !library.some((entry) => entry.slug === anime.slug))
+    .map((anime, originalIndex) => ({
+      anime,
+      originalIndex,
+      affinity: (anime.genres || [anime.genre]).reduce((sum, genre) => sum + (tasteProfile.get(genre) || 0), 0),
+    }))
+    .sort((a, b) => b.affinity - a.affinity || b.anime.rating - a.anime.rating || a.originalIndex - b.originalIndex)
+    .slice(0, 8)
+    .map(({ anime }) => anime), [library, recommendationFeed.items, tasteProfile]);
+  const recommendationSubtitle = favoriteGenres.length
+    ? `Baseado em ${favoriteGenres.map(genrePt).join(", ")} na sua biblioteca`
+    : "Seleção popular renovada a cada visita; salve e avalie animes para personalizar";
   const featuredTitle = featured?.title?.split(" ") || [];
   const translatedSynopsis = useTranslatedSynopsis(featured?.synopsis || featured?.blurb, language);
   const heroSynopsis = useMemo(() => {
@@ -772,23 +855,24 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
           })}</div>
         </section>}
 
-        {recommendationFeed.loading ? <section className="carousel-section"><div className="section-heading"><div><p className="eyebrow">Uma seleção diferente a cada visita</p><h2>Recomendados para você</h2></div></div><LoadingCards /></section> : recommendationFeed.error ? <ApiError message={recommendationFeed.error} retry={recommendationFeed.retry} /> : <Carousel title="Recomendados para você" subtitle="Animes populares renovados a cada nova visita" items={recommendations.length ? recommendations : recommendationFeed.items.slice(0, 8)} />}
+        {recommendationFeed.loading ? <section className="carousel-section"><div className="section-heading"><div><p className="eyebrow">{recommendationSubtitle}</p><h2>Recomendados para você</h2></div></div><LoadingCards /></section> : recommendationFeed.error ? <ApiError message={recommendationFeed.error} retry={recommendationFeed.retry} /> : <Carousel title="Recomendados para você" subtitle={recommendationSubtitle} items={recommendations.length ? recommendations : recommendationFeed.items.slice(0, 8)} />}
 
         <section className="collection-feature">
           <div className="section-heading">
             <div><p className="eyebrow">Criadas pela comunidade</p><h2>Coleções em destaque</h2></div>
             <Link href="/collections">Explorar todas <span>↗</span></Link>
           </div>
-          {feed.loading ? <LoadingCards count={3} grid /> : feed.error ? <ApiError message={feed.error} retry={feed.retry} compact /> : feed.items.length ? <div className="collection-grid">
-            {collections.slice(0, 3).map((collection, index) => (
-              <Link href="/collections" className="collection-card" key={collection.title}>
+          {collectionFeed.loading ? <LoadingCards count={3} grid /> : collectionFeed.error ? <ApiError message={collectionFeed.error} retry={collectionFeed.retry} compact /> : collectionFeed.items.length ? <div className="collection-grid">
+            {collectionFeed.items.slice(0, 3).map((collection, index) => (
+              <Link href={`/collections#collection-${collection.id}`} className="collection-card" key={collection.id}>
                 <div className="collection-posters">
-                  {collection.frames.map((frame, posterIndex) => <Poster key={frame} anime={feed.items[frame % feed.items.length]} className={`stack-${posterIndex}`} />)}
+                  {collection.items.slice(0, 3).map((item, posterIndex) => <Poster key={item.slug} anime={animeFromCollectionItem(item)} className={`stack-${posterIndex}`} />)}
+                  {!collection.items.length && <div className="collection-empty-cover">Sua curadoria começa aqui</div>}
                 </div>
-                <div className="collection-copy"><span>0{index + 1}</span><div><h3>{collection.title}</h3><p>{collection.count} títulos · por @{collection.owner}</p></div><b>↗</b></div>
+                <div className="collection-copy"><span>0{index + 1}</span><div><h3>{collection.title}</h3><p>{collection.items.length} títulos · por @{collection.owner.username}{collection.collaborators.length ? ` + ${collection.collaborators.length}` : ""}</p></div><b>↗</b></div>
               </Link>
             ))}
-          </div> : <EmptyData label="A API não retornou animes para estas coleções." />}
+          </div> : <EmptyData label="Ainda não há coleções públicas. Crie a primeira curadoria da comunidade." />}
         </section>
 
         {trendingFeed.loading ? <section className="carousel-section"><div className="section-heading"><div><p className="eyebrow">Em exibição e liderando em popularidade</p><h2>Em alta agora</h2></div></div><LoadingCards /></section> : trendingFeed.error ? <ApiError message={trendingFeed.error} retry={trendingFeed.retry} /> : <Carousel title="Em alta agora" subtitle="Animes em exibição ordenados pela popularidade" items={trendingFeed.items} />}
@@ -987,6 +1071,8 @@ type Comment = {
   animeSlug?: string;
   animeTitle?: string;
   animePoster?: string | null;
+  discussionKind?: "general" | "episode" | "theory" | "recommendation";
+  episodeNumber?: number | null;
 };
 
 type YouTubePlayer = {
@@ -1160,7 +1246,7 @@ function AnimeTrailerBanner({ anime }: { anime: Anime }) {
   );
 }
 
-function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { slug?: string; openModal: (modal: Modal) => void; language: Language; user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary }) {
+function AnimeView({ slug, openModal, openCollection, language, user, library, saveLibrary }: { slug?: string; openModal: (modal: Modal) => void; openCollection: (anime: Anime) => void; language: Language; user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary }) {
   const remoteId = slug?.startsWith("mal-") ? Number(slug.slice(4)) : 0;
   const [remoteAnime, setRemoteAnime] = useState<Anime | null>(null);
   const [detailLoading, setDetailLoading] = useState(Boolean(remoteId));
@@ -1170,6 +1256,7 @@ function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { 
   const [comments, setComments] = useState<Comment[]>([]);
   const [comment, setComment] = useState("");
   const [message, setMessage] = useState("");
+  const [discussionEpisode, setDiscussionEpisode] = useState<number | null>(null);
   const anime = remoteAnime ?? emptyAnime;
   const libraryEntry = library.find((entry) => entry.slug === anime.slug);
   const watchState = libraryEntry?.status || "to_watch";
@@ -1217,17 +1304,20 @@ function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { 
     const animeSlug = slug || anime.slug;
     if (!animeSlug) return;
     const controller = new AbortController();
-    fetch(`/api/discussions?anime=${encodeURIComponent(animeSlug)}`, { cache: "no-store", signal: controller.signal })
+    const params = new URLSearchParams({ anime: animeSlug });
+    if (discussionEpisode !== null) params.set("episode", String(discussionEpisode));
+    setComments([]);
+    fetch(`/api/discussions?${params.toString()}`, { cache: "no-store", signal: controller.signal })
       .then((response) => response.ok ? response.json() : null)
       .then((data) => setComments(data?.comments ?? []))
       .catch(() => undefined);
     return () => controller.abort();
-  }, [slug, anime.slug]);
+  }, [slug, anime.slug, discussionEpisode]);
 
   async function publishComment(body: string, parentId?: string | null) {
     setMessage("Publicando…");
     try {
-      const response = await fetch("/api/discussions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ animeSlug: slug || anime.slug, animeTitle: anime.title, animePoster: anime.image || null, body, parentId }) });
+      const response = await fetch("/api/discussions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ animeSlug: slug || anime.slug, animeTitle: anime.title, animePoster: anime.image || null, body, parentId, episodeNumber: discussionEpisode }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não foi possível publicar");
       setComments((current) => [...current, data.comment]);
@@ -1283,7 +1373,7 @@ function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { 
             {libraryMessage && <small>{libraryMessage}</small>}
           </div>
         </div>
-        <div className="anime-side-actions"><button className={`favorite-button ${libraryEntry?.favorite ? "selected" : ""}`} onClick={() => updateLibrary({ favorite: !libraryEntry?.favorite })}>{libraryEntry?.favorite ? "♥ Favorito" : "♡ Favoritar"}</button><button className="collection-button" onClick={() => openModal("collection")}>＋ Adicionar à coleção</button></div>
+        <div className="anime-side-actions"><button className={`favorite-button ${libraryEntry?.favorite ? "selected" : ""}`} onClick={() => updateLibrary({ favorite: !libraryEntry?.favorite })}>{libraryEntry?.favorite ? "♥ Favorito" : "♡ Favoritar"}</button><button className="collection-button" onClick={() => openCollection(anime)}>＋ Adicionar à coleção</button></div>
       </section>
       <section className="page-shell anime-body">
         <div className="tabs" role="tablist">{tabs.map((item) => <button role="tab" aria-selected={tab === item} className={tab === item ? "active" : ""} onClick={() => setTab(item)} key={item}>{item}{item === "Discussões" && comments.length > 0 && <span>{comments.length}</span>}</button>)}</div>
@@ -1293,7 +1383,7 @@ function AnimeView({ slug, openModal, language, user, library, saveLibrary }: { 
         {tab === "Equipe" && <StaffTab anime={anime} />}
         {tab === "Músicas-tema" && <ThemeMusicTab anime={anime} />}
         {tab === "Avaliações" && <ReviewsTab anime={anime} entry={libraryEntry} updateLibrary={updateLibrary} />}
-        {tab === "Discussões" && <DiscussionTab comments={comments} comment={comment} setComment={setComment} submit={submitComment} onReply={publishComment} message={message} />}
+        {tab === "Discussões" && <DiscussionTab comments={comments} comment={comment} setComment={setComment} submit={submitComment} onReply={publishComment} message={message} episodes={anime.episodes} episode={discussionEpisode} onEpisode={setDiscussionEpisode} />}
       </section>
     </main>
   );
@@ -1351,9 +1441,16 @@ function ReviewsTab({ anime, entry, updateLibrary }: { anime: Anime; entry?: Lib
   return <section className="tab-panel"><p className="eyebrow">Análises aprofundadas</p><h2>Avaliações da comunidade</h2><div className="rating-composer"><div><span>Sua nota para {anime.title}</span><div className="score-buttons">{Array.from({ length: 10 }, (_, index) => index + 1).map((score) => <button className={entry?.score === score ? "active" : ""} onClick={() => updateLibrary({ score })} key={score}>{score}</button>)}</div></div><textarea value={review} onChange={(event) => setReview(event.target.value)} placeholder="Escreva uma avaliação sobre história, personagens, animação ou trilha sonora…" /><footer><label><input type="checkbox" checked={spoiler} onChange={(event) => setSpoiler(event.target.checked)} /> Contém spoiler</label><button className="primary-button small" onClick={() => { if (review.trim()) setPosted(true); }}>{posted ? "✓ Avaliação publicada" : "Publicar avaliação"}</button></footer></div><div className="review-grid">{posted && <article className={spoiler ? "spoiler-review" : ""}><span>{"★".repeat(entry?.score || 0)}{"☆".repeat(10 - (entry?.score || 0))}</span><h3>“Minha avaliação de {anime.title}”</h3><p>{spoiler ? "Conteúdo marcado como spoiler — clique para revelar." : review}</p><small>— você · agora</small></article>}<article><span>★★★★★</span><h3>“Uma ficção científica lindamente paciente.”</h3><p>Uma obra que confia mais em uma imagem prolongada do que em explicações excessivas.</p><small>— @mika.wav · útil para 184 pessoas</small></article><article><span>★★★★☆</span><h3>“O mistério recompensa a atenção.”</h3><p>O quarto episódio muda o significado de quase todos os elementos visuais repetidos.</p><small>— @noa.exe · útil para 93 pessoas</small></article></div></section>;
 }
 
-function DiscussionTab({ comments, comment, setComment, submit, onReply, message }: { comments: Comment[]; comment: string; setComment: (value: string) => void; submit: (event: FormEvent) => void; onReply: (body: string, parentId?: string | null) => Promise<boolean>; message: string }) {
+function DiscussionTab({ comments, comment, setComment, submit, onReply, message, episodes, episode, onEpisode }: { comments: Comment[]; comment: string; setComment: (value: string) => void; submit: (event: FormEvent) => void; onReply: (body: string, parentId?: string | null) => Promise<boolean>; message: string; episodes?: number | null; episode: number | null; onEpisode: (episode: number | null) => void }) {
   const rootComments = comments.filter((item) => !item.parentId);
-  return <section className="discussion-panel"><div className="discussion-heading"><div><p className="eyebrow">Conversa vinculada a este anime</p><h2>Discussões</h2><p className="discussion-lede">Somente comentários publicados por usuários do Yugen aparecem aqui.</p></div></div><form className="comment-form" onSubmit={submit}><div className="avatar">YU</div><textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Compartilhe uma teoria, observação ou pergunta…" aria-label="Novo comentário" /><div><span>{message || "Esta publicação ficará visível para toda a comunidade."}</span><button className="primary-button small" type="submit">Publicar comentário</button></div></form><div className="comment-list">{rootComments.length ? rootComments.map((item) => <CommentItem key={item.id} item={item} replies={comments.filter((reply) => reply.parentId === item.id)} onReply={onReply} />) : <div className="social-empty discussion-empty"><span>○</span><h3>Ainda não há discussões</h3><p>Seja a primeira pessoa a comentar sobre este anime.</p></div>}</div></section>;
+  const totalEpisodes = Math.max(0, episodes || 0);
+  return <section className="discussion-panel"><div className="discussion-heading"><div><p className="eyebrow">Conversa vinculada a este anime</p><h2>Discussões</h2><p className="discussion-lede">Escolha a conversa geral ou um episódio. Todo comentário de episódio fica protegido contra spoilers.</p></div><label className="episode-discussion-picker"><span>Canal da conversa</span><select value={episode ?? "general"} onChange={(event) => onEpisode(event.target.value === "general" ? null : Number(event.target.value))}><option value="general">Discussão geral</option>{Array.from({ length: totalEpisodes }, (_, index) => index + 1).map((number) => <option value={number} key={number}>Episódio {number}</option>)}</select></label></div>{episode !== null && <div className="episode-spoiler-note"><span>◉</span><div><b>Zona de spoilers · Episódio {episode}</b><p>As mensagens deste canal ficam ocultas até cada pessoa decidir revelar.</p></div></div>}<form className="comment-form" onSubmit={submit}><div className="avatar">YU</div><textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={episode === null ? "Compartilhe uma teoria, observação ou pergunta…" : `Comente o episódio ${episode}…`} aria-label="Novo comentário" /><div><span>{message || (episode === null ? "Esta publicação ficará visível para toda a comunidade." : "Esta publicação será marcada automaticamente como spoiler.")}</span><button className="primary-button small" type="submit">Publicar comentário</button></div></form><div className="comment-list">{rootComments.length ? rootComments.map((item) => <CommentItem key={item.id} item={item} replies={comments.filter((reply) => reply.parentId === item.id)} onReply={onReply} />) : <div className="social-empty discussion-empty"><span>○</span><h3>{episode === null ? "Ainda não há discussões" : `Ainda não há comentários no episódio ${episode}`}</h3><p>Seja a primeira pessoa a começar esta conversa.</p></div>}</div></section>;
+}
+
+function SpoilerBody({ body, episodeNumber }: { body: string; episodeNumber?: number | null }) {
+  const [visible, setVisible] = useState(!episodeNumber);
+  if (visible) return <p>{body}</p>;
+  return <button className="spoiler-cover comment-spoiler" type="button" onClick={() => setVisible(true)}><span>◉</span><b>Spoiler do episódio {episodeNumber}</b><small>Clique para revelar esta mensagem</small></button>;
 }
 
 function CommentItem({ item, replies, onReply }: { item: Comment; replies: Comment[]; onReply: (body: string, parentId?: string | null) => Promise<boolean> }) {
@@ -1409,7 +1506,7 @@ function CommentItem({ item, replies, onReply }: { item: Comment; replies: Comme
     }
   }
 
-  return <article className="comment" id={`comment-${item.id}`}><div className="avatar has-image" style={profileImageStyle(item.authorAvatar)}>{!item.authorAvatar && item.author.slice(0, 2).toUpperCase()}</div><div><header><b>@{item.author}</b><span>{discussionTime(item.createdAt)}</span><div className="comment-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções do comentário" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu comment-menu" role="menu"><button onClick={() => choose("copy")} role="menuitem"><span>⧉</span>Copiar link</button><button onClick={() => choose("report")} role="menuitem"><span>⚑</span>Denunciar comentário</button><button onClick={() => choose("hide")} role="menuitem"><span>⊘</span>Ocultar comentário</button></div>}</div></header><p>{item.body}</p><footer><button onClick={toggleLike} className={liked ? "liked" : ""} disabled={busy}>{liked ? "♥" : "♡"} {likes}</button><button onClick={() => setReplying(!replying)}>↩ Responder</button><button onClick={() => choose("report")}>⚑ Denunciar</button></footer>{replying && <form className="quick-reply" onSubmit={submitReply}><input value={reply} onChange={(event) => setReply(event.target.value)} placeholder={`Responder a @${item.author}`} autoFocus /><button type="button" onClick={() => setReplying(false)}>Cancelar</button><button className="primary-button small" type="submit" disabled={busy}>{busy ? "Enviando…" : "Responder"}</button></form>}{notice && <button className="post-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}{replies.map((nestedReply) => <div className="nested" key={nestedReply.id}><div className="avatar has-image" style={profileImageStyle(nestedReply.authorAvatar)}>{!nestedReply.authorAvatar && nestedReply.author.slice(0, 2).toUpperCase()}</div><div><header><b>@{nestedReply.author}</b><span>{discussionTime(nestedReply.createdAt)}</span></header><p>{nestedReply.body}</p><footer><span>♡ {nestedReply.likeCount}</span><button onClick={() => setReplying(true)}>↩ Responder</button></footer></div></div>)}</div></article>;
+  return <article className="comment" id={`comment-${item.id}`}><div className="avatar has-image" style={profileImageStyle(item.authorAvatar)}>{!item.authorAvatar && item.author.slice(0, 2).toUpperCase()}</div><div><header><b>@{item.author}</b><span>{item.episodeNumber ? `Episódio ${item.episodeNumber} · ` : ""}{discussionTime(item.createdAt)}</span><div className="comment-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções do comentário" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu comment-menu" role="menu"><button onClick={() => choose("copy")} role="menuitem"><span>⧉</span>Copiar link</button><button onClick={() => choose("report")} role="menuitem"><span>⚑</span>Denunciar comentário</button><button onClick={() => choose("hide")} role="menuitem"><span>⊘</span>Ocultar comentário</button></div>}</div></header><SpoilerBody body={item.body} episodeNumber={item.episodeNumber} /><footer><button onClick={toggleLike} className={liked ? "liked" : ""} disabled={busy}>{liked ? "♥" : "♡"} {likes}</button><button onClick={() => setReplying(!replying)}>↩ Responder</button><button onClick={() => choose("report")}>⚑ Denunciar</button></footer>{replying && <form className="quick-reply" onSubmit={submitReply}><input value={reply} onChange={(event) => setReply(event.target.value)} placeholder={`Responder a @${item.author}`} autoFocus /><button type="button" onClick={() => setReplying(false)}>Cancelar</button><button className="primary-button small" type="submit" disabled={busy}>{busy ? "Enviando…" : "Responder"}</button></form>}{notice && <button className="post-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}{replies.map((nestedReply) => <div className="nested" key={nestedReply.id}><div className="avatar has-image" style={profileImageStyle(nestedReply.authorAvatar)}>{!nestedReply.authorAvatar && nestedReply.author.slice(0, 2).toUpperCase()}</div><div><header><b>@{nestedReply.author}</b><span>{discussionTime(nestedReply.createdAt)}</span></header><SpoilerBody body={nestedReply.body} episodeNumber={nestedReply.episodeNumber} /><footer><span>♡ {nestedReply.likeCount}</span><button onClick={() => setReplying(true)}>↩ Responder</button></footer></div></div>)}</div></article>;
 }
 
 type SocialPost = {
@@ -1428,6 +1525,7 @@ type SocialPost = {
   verified?: boolean;
   following?: boolean;
   spoiler?: boolean;
+  episodeNumber?: number | null;
   imageUrl?: string;
   poll?: { first: string; second: string };
 };
@@ -1462,7 +1560,7 @@ function SocialPostCard({ post, onHide }: { post: SocialPost; onHide: () => void
     if (!reply.trim() || !post.anime || busy) return;
     setBusy(true);
     try {
-      const response = await fetch("/api/discussions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ animeSlug: post.anime.slug, animeTitle: post.anime.title, animePoster: post.anime.image || null, body: reply.trim(), parentId: post.id }) });
+      const response = await fetch("/api/discussions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ animeSlug: post.anime.slug, animeTitle: post.anime.title, animePoster: post.anime.image || null, body: reply.trim(), parentId: post.id, episodeNumber: post.episodeNumber }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não foi possível responder.");
       setReplyCount((count) => count + 1);
@@ -1514,7 +1612,7 @@ function SocialPostCard({ post, onHide }: { post: SocialPost; onHide: () => void
       <div className="feed-avatar has-image" style={profileImageStyle(post.authorAvatar)}>{!post.authorAvatar && post.initials}</div>
       <div className="post-content">
         <header><div><b>{post.author}</b>{post.verified && <span className="verified" aria-label="Verificado">✓</span>}<span>@{post.handle} · {post.time}</span></div><div className="post-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções da publicação" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu post-menu" role="menu"><button onClick={() => choosePostOption("hide")} role="menuitem"><span>⊘</span>Não tenho interesse</button><button onClick={() => choosePostOption("mute")} role="menuitem"><span>⊖</span>Silenciar @{post.handle}</button><button onClick={() => choosePostOption("report")} role="menuitem"><span>⚑</span>Denunciar publicação</button><button onClick={() => choosePostOption("copy")} role="menuitem"><span>⧉</span>Copiar link</button></div>}</div></header>
-        {post.label && <span className="post-label">{post.label}</span>}
+        {(post.label || post.episodeNumber) && <span className="post-label">{post.episodeNumber ? `EPISÓDIO ${post.episodeNumber} · SPOILER` : post.label}</span>}
         {post.spoiler && !spoilerVisible ? <button className="spoiler-cover" onClick={() => setSpoilerVisible(true)}><span>◉</span><b>Conteúdo com spoiler</b><small>Clique para revelar</small></button> : <p>{post.body}</p>}
         {post.imageUrl && <div className="post-image" style={{ backgroundImage: `url(${post.imageUrl})` }} role="img" aria-label="Imagem anexada à publicação" />}
         {post.anime && <Link href={`/anime/${post.anime.slug}?tab=discussions`} className="post-anime-card"><Poster anime={post.anime} /><div><span>Em discussão</span><h3>{post.anime.title}</h3><p>{post.anime.year} · {genrePt(post.anime.genre)} · ★ {post.anime.rating}</p><small>Abrir discussão do anime ↗</small></div></Link>}
@@ -1566,6 +1664,8 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
         replies: rows.filter((reply) => reply.parentId === item.id).length,
         reposts: 0,
         likes: item.likeCount,
+        spoiler: item.discussionKind === "episode",
+        episodeNumber: item.episodeNumber,
         anime: item.animeSlug ? { ...emptyAnime, slug: item.animeSlug, title: item.animeTitle || item.animeSlug, image: item.animePoster || undefined, format: "Anime", genre: "Anime" } : undefined,
       })));
     } catch (error) {
@@ -1696,10 +1796,10 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
   );
 }
 
-function CollectionsView({ openModal }: { openModal: (modal: Modal) => void }) {
+function CollectionsView({ openModal, user }: { openModal: (modal: Modal) => void; user: SessionUser | null | undefined }) {
   const [visible, setVisible] = useState(6);
-  const feed = useAnimeFeed("", 18);
-  return <main className="page-shell collections-page"><header className="page-title split"><div><p className="eyebrow">Criadas por pessoas, alimentadas pela Jikan</p><h1>Coleções com<br /><em>um ponto de vista.</em></h1></div><button className="primary-button" onClick={() => openModal("create")}>＋ Criar nova</button></header>{feed.loading ? <LoadingCards count={6} grid /> : feed.error ? <ApiError message={feed.error} retry={feed.retry} /> : feed.items.length ? <><div className="collection-list-grid">{[...collections, ...collections].slice(0, visible).map((collection, index) => <article className="large-collection" key={`${collection.title}-${index}`}><div className="collection-cover">{collection.frames.map((frame) => <Poster key={frame} anime={feed.items[frame % feed.items.length]} />)}</div><div><p>Coleção · {collection.count} títulos</p><h2>{collection.title}</h2><span>por @{collection.owner}</span></div><button aria-label="Abrir coleção">↗</button></article>)}</div>{visible < 12 && <button className="wide-button" onClick={() => setVisible(12)}>Mostrar mais <span>↓</span></button>}</> : <EmptyData label="A API não retornou animes para as coleções." />}</main>;
+  const feed = useCommunityCollections();
+  return <main className="page-shell collections-page"><header className="page-title split"><div><p className="eyebrow">Criadas e editadas por pessoas da comunidade</p><h1>Coleções com<br /><em>um ponto de vista.</em></h1></div><button className="primary-button" onClick={() => openModal(user ? "create" : "login")}>＋ Criar nova</button></header>{feed.loading ? <LoadingCards count={6} grid /> : feed.error ? <ApiError message={feed.error} retry={feed.retry} /> : feed.items.length ? <><div className="collection-list-grid">{feed.items.slice(0, visible).map((collection) => <article className="large-collection" id={`collection-${collection.id}`} key={collection.id}><div className="collection-cover">{collection.items.slice(0, 3).map((item) => <Poster key={item.slug} anime={animeFromCollectionItem(item)} />)}{!collection.items.length && <div className="collection-empty-cover">Coleção pronta para receber o primeiro anime</div>}</div><div><p>{collection.collaborators.length ? "Coleção colaborativa" : "Coleção"} · {collection.items.length} títulos</p><h2>{collection.title}</h2><span>por @{collection.owner.username}{collection.collaborators.length ? ` com ${collection.collaborators.map((item) => `@${item.username}`).join(", ")}` : ""}</span>{collection.description && <small className="collection-description">{collection.description}</small>}</div><Link href={collection.items[0] ? `/anime/${collection.items[0].slug}` : "#"} aria-label={collection.items[0] ? `Abrir primeiro anime de ${collection.title}` : `${collection.title} está vazia`}>↗</Link></article>)}</div>{visible < feed.items.length && <button className="wide-button" onClick={() => setVisible((value) => value + 6)}>Mostrar mais <span>↓</span></button>}</> : <div className="collections-empty"><EmptyData label="Ainda não há coleções reais. Crie a primeira e convide outra pessoa para editar." /><button className="primary-button" onClick={() => openModal(user ? "create" : "login")}>Criar a primeira coleção</button></div>}</main>;
 }
 
 function NewsView() {
@@ -1790,7 +1890,7 @@ function SettingsView({ user, onUserChange }: { user: SessionUser | null | undef
 
 function BlueprintView() {
   const phases = [{ n: "01", title: "Núcleo de descoberta", copy: "Início, catálogo, página do anime, pesquisa, filtros e metadados oficiais." }, { n: "02", title: "Biblioteca pessoal", copy: "Identidade, status, coleções, seguidores, perfil e fluxo de importação." }, { n: "03", title: "Camada social", copy: "Avaliações, tópicos, respostas aninhadas, curtidas, denúncias e moderação." }, { n: "04", title: "Editorial e escala", copy: "CMS de notícias, recomendações, histórico, análises, cache e indexação da busca." }];
-  const tables = ["users", "animes", "studios", "genres", "anime_genres", "user_anime_statuses", "collections", "collection_items", "reviews", "discussions", "comments", "comment_likes", "follows", "moderation_reports", "anime_revisions"];
+  const tables = ["users", "animes", "studios", "genres", "anime_genres", "user_anime_statuses", "collections", "collection_items", "collection_collaborators", "reviews", "discussions", "comments", "comment_likes", "follows", "moderation_reports", "anime_revisions"];
   return <main className="blueprint-page page-shell"><header className="page-title"><p className="eyebrow">Plano de produto e engenharia</p><h1>Feito para crescer<br /><em>sem precisar recomeçar.</em></h1><p>Uma arquitetura prática: primeiro o catálogo, depois identidade e comunidade.</p></header><section className="stack-grid"><article><span>Interface</span><h2>Next.js + React</h2><p>App Router, renderização no servidor para descoberta e componentes no cliente para filtros, listas e modais.</p></article><article><span>Aplicação</span><h2>Rotas Node.js</h2><p>Rotas internas para o protótipo; a separação em serviços acontece quando o tráfego ou a equipe exigirem.</p></article><article><span>Banco de dados</span><h2>PostgreSQL</h2><p>Fonte relacional da verdade em produção, com filtros indexados, transações e pesquisa de texto completo.</p></article><article><span>Identidade</span><h2>Auth.js + OAuth</h2><p>Email e senha, Google e Apple, com email verificado e autorização no servidor.</p></article></section><section className="schema-section"><div><p className="eyebrow">Modelo relacional</p><h2>Tabelas principais</h2><p>Mantenha os dados dos animes separados da atividade dos usuários. Tabelas de junção tratam relações muitos-para-muitos; comentários aninhados usam um ID de pai opcional.</p></div><div className="schema-map">{tables.map((table, index) => <span key={table}><i>{String(index + 1).padStart(2, "0")}</i>{table}</span>)}</div></section><section className="relation-table"><div className="relation-head"><span>Relação</span><span>Implementação</span><span>Motivo</span></div><div><b>Usuário → status do anime</b><span>user_anime_statuses (user_id, anime_id)</span><span>Um status e uma nota atuais por usuário e título.</span></div><div><b>Anime ↔ gêneros</b><span>anime_genres (anime_id, genre_id)</span><span>Filtragem rápida do catálogo.</span></div><div><b>Coleção ↔ anime</b><span>collection_items + position</span><span>Listas ordenadas e criadas por usuários.</span></div><div><b>Discussão → comentários</b><span>comments.parent_id → comments.id</span><span>Tópicos aninhados sem tabela separada de respostas.</span></div><div><b>Anime → revisões</b><span>anime_revisions + editor_id</span><span>Histórico da wiki, comparação, reversão e moderação.</span></div></section><section className="roadmap"><p className="eyebrow">Ordem de implementação</p><h2>Quatro fases intencionais</h2>{phases.map((phase) => <article key={phase.n}><span>{phase.n}</span><h3>{phase.title}</h3><p>{phase.copy}</p></article>)}</section><section className="decision-note"><p className="eyebrow">Comece aqui</p><h2>Uma experiência completa vale mais que doze páginas vazias.</h2><p>Entregue primeiro Catálogo → Detalhes do anime → “Quero assistir”. Isso valida metadados, filtros, rotas, identidade e uma ação gravada. As discussões vêm depois das regras de propriedade e moderação.</p><Link className="primary-button" href="/catalog">Explorar o produto <span>↗</span></Link></section></main>;
 }
 
@@ -1842,10 +1942,54 @@ function AuthModal({ type, onClose, switchTo }: { type: Exclude<Modal, "collecti
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true"><button className="modal-close" onClick={onClose} aria-label="Fechar">×</button><p className="eyebrow">Sua biblioteca espera por você</p><h2>{title}</h2>{type !== "forgot" && oauthProviders.length > 0 && <>{oauthProviders.includes("google") && <button type="button" className="social-button" onClick={() => signIn("google", { redirectTo: "/profile" })}>G Continuar com Google</button>}{oauthProviders.includes("apple") && <button type="button" className="social-button" onClick={() => signIn("apple", { redirectTo: "/profile" })}>● Continuar com Apple</button>}<div className="or"><span />ou continue com email<span /></div></>}<form onSubmit={submit}>{type === "join" && <label>Nome de usuário<input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={24} autoComplete="username" placeholder="Como as pessoas verão você" required /></label>}<label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" placeholder="voce@exemplo.com" required /></label>{type !== "forgot" && <label>Senha<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" minLength={type === "join" ? 12 : undefined} autoComplete={type === "join" ? "new-password" : "current-password"} placeholder="Pelo menos 12 caracteres" required /></label>}<button className="primary-button full" disabled={submitting}>{submitting ? "Aguarde…" : type === "join" ? "Criar conta" : type === "login" ? "Entrar" : "Enviar link de redefinição"}</button>{status && <p className="auth-status" role="status">{status}</p>}</form>{type === "login" && <button className="text-button" onClick={() => switchTo("forgot")}>Esqueceu a senha?</button>}<p className="modal-switch">{type === "join" ? "Já tem uma conta?" : "Novo no Yugen?"} <button onClick={() => switchTo(type === "join" ? "login" : "join")}>{type === "join" ? "Entrar" : "Criar uma"}</button></p></section></div>;
 }
 
-function CollectionModal({ type, onClose }: { type: "collection" | "create"; onClose: () => void }) {
-  const [created, setCreated] = useState(false);
-  const feed = useAnimeFeed("", 6);
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal collection-modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true"><button className="modal-close" onClick={onClose} aria-label="Fechar">×</button><p className="eyebrow">Sua curadoria</p><h2>{type === "create" ? "Criar coleção" : "Escolher coleção"}</h2>{type === "create" ? <><label>Título<input placeholder="Ex.: Ficção científica tranquila para dias de chuva" /></label><label>Descrição<textarea placeholder="O que conecta estas histórias?" /></label><label className="check-row"><input type="checkbox" /> Manter esta coleção privada</label><button className="primary-button full" onClick={() => setCreated(true)}>{created ? "✓ Coleção criada" : "Criar coleção"}</button></> : <><button className="primary-button full" onClick={() => setCreated(true)}>{created ? "✓ Adicionado à coleção" : "＋ Criar uma nova coleção"}</button><div className="collection-options">{feed.items.length ? collections.slice(0, 3).map((collection, index) => <button onClick={() => setCreated(true)} key={collection.title}><Poster anime={feed.items[index % feed.items.length]} /><span><b>{collection.title}</b><small>{collection.count} títulos</small></span><i>＋</i></button>) : <span className="modal-api-note">{feed.error ? "API de animes indisponível." : "Carregando capas…"}</span>}</div></>}</section></div>;
+function CollectionModal({ type, onClose, onSwitch, anime }: { type: "collection" | "create"; onClose: () => void; onSwitch: (type: "collection" | "create") => void; anime: Anime | null }) {
+  const feed = useCommunityCollections();
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [privacy, setPrivacy] = useState<"public" | "private" | "unlisted">("public");
+  const [collaborator, setCollaborator] = useState("");
+  const [busyId, setBusyId] = useState("");
+  const [status, setStatus] = useState("");
+
+  async function createCollection(event: FormEvent) {
+    event.preventDefault();
+    setBusyId("create");
+    setStatus("");
+    try {
+      const response = await fetch("/api/collections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "create", title, description, privacy, collaboratorUsername: collaborator }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não foi possível criar a coleção.");
+      setStatus("Coleção criada e pronta para receber animes.");
+      setTitle("");
+      setDescription("");
+      setCollaborator("");
+      window.dispatchEvent(new Event("yugen:collections"));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Não foi possível criar a coleção.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function addToCollection(collectionId: string) {
+    if (!anime) return;
+    setBusyId(collectionId);
+    setStatus("");
+    try {
+      const response = await fetch("/api/collections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "add_item", collectionId, anime: libraryPayload(anime) }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não foi possível adicionar o anime.");
+      setStatus(`${anime.title} foi adicionado à coleção.`);
+      window.dispatchEvent(new Event("yugen:collections"));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Não foi possível adicionar o anime.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  const editableCollections = feed.items.filter((collection) => collection.canEdit);
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal collection-modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true"><button className="modal-close" onClick={onClose} aria-label="Fechar">×</button><p className="eyebrow">Sua curadoria</p><h2>{type === "create" ? "Criar coleção" : "Escolher coleção"}</h2>{type === "create" ? <form onSubmit={createCollection}><label>Título<input value={title} onChange={(event) => setTitle(event.target.value)} minLength={3} maxLength={90} placeholder="Ex.: Ficção científica para dias de chuva" required /></label><label>Descrição<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} placeholder="O que conecta estas histórias?" /></label><label>Privacidade<select value={privacy} onChange={(event) => setPrivacy(event.target.value as typeof privacy)}><option value="public">Pública</option><option value="unlisted">Não listada</option><option value="private">Privada</option></select></label><label>Colaborador opcional<input value={collaborator} onChange={(event) => setCollaborator(event.target.value)} placeholder="@nome_de_usuario" /><small>Essa pessoa poderá adicionar animes junto com você.</small></label><button className="primary-button full" disabled={busyId === "create"}>{busyId === "create" ? "Criando…" : "Criar coleção"}</button></form> : <><button className="primary-button full" type="button" onClick={() => onSwitch("create")}>＋ Criar uma nova coleção</button><div className="collection-options">{feed.loading ? <span className="modal-api-note">Carregando suas coleções…</span> : feed.error ? <button type="button" onClick={feed.retry}>Tentar novamente</button> : editableCollections.length ? editableCollections.map((collection) => <button type="button" onClick={() => addToCollection(collection.id)} disabled={Boolean(busyId)} key={collection.id}>{collection.items[0] ? <Poster anime={animeFromCollectionItem(collection.items[0])} /> : <span className="collection-option-placeholder">＋</span>}<span><b>{collection.title}</b><small>{collection.items.length} títulos{collection.collaborators.length ? " · colaborativa" : ""}</small></span><i>{busyId === collection.id ? "…" : "＋"}</i></button>) : <span className="modal-api-note">Você ainda não tem uma coleção editável. Crie uma para começar.</span>}</div></>}{status && <p className="collection-status" role="status">{status}</p>}</section></div>;
 }
 
 function Footer() {
@@ -1856,6 +2000,7 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
   const [theme, setTheme] = useState("dark");
   const [language, setLanguage] = useState<Language>("pt");
   const [modal, setModal] = useState<Modal>(null);
+  const [collectionAnime, setCollectionAnime] = useState<Anime | null>(null);
   const [user, setUser] = useState<SessionUser | null | undefined>(undefined);
   const [library, setLibrary] = useState<LibraryEntry[]>([]);
   useEffect(() => {
@@ -1896,6 +2041,7 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
       episodes: anime.episodes,
       year: anime.year,
       format: anime.format,
+      genres: anime.genres || [anime.genre].filter(Boolean),
       status: patch.status || current?.status || "to_watch",
       progressEpisodes: patch.progressEpisodes ?? current?.progressEpisodes ?? 0,
       score: patch.score === undefined ? current?.score ?? null : patch.score,
@@ -1913,5 +2059,10 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
   }
   function toggleTheme() { const next = theme === "dark" ? "light" : "dark"; setTheme(next); window.localStorage.setItem("yugen-theme", next); }
   function changeLanguage(next: Language) { setLanguage(next); window.localStorage.setItem("yugen-language", next); }
-  return <div className={`site ${theme}`}><Header theme={theme} onTheme={toggleTheme} onAuth={setModal} user={user} language={language} onLanguage={changeLanguage} />{view === "home" && <HomeView openAuth={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "catalog" && <CatalogView />}{view === "anime" && <AnimeView slug={slug} openModal={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "calendar" && <CalendarView user={user} library={library} saveLibrary={saveLibrary} openAuth={setModal} />}{view === "character" && <CharacterView slug={slug} />}{view === "collections" && <CollectionsView openModal={setModal} />}{view === "discussions" && <DiscussionsView user={user} />}{view === "news" && <NewsView />}{view === "article" && <ArticleView />}{view === "profile" && <ProfileView user={user} library={library} />}{view === "settings" && <SettingsView user={user} onUserChange={setUser} />}{view === "blueprint" && <BlueprintView />}<Footer />{modal && ["join", "login", "forgot"].includes(modal) && <AuthModal type={modal as "join" | "login" | "forgot"} onClose={() => setModal(null)} switchTo={setModal} />}{modal && ["collection", "create"].includes(modal) && <CollectionModal type={modal as "collection" | "create"} onClose={() => setModal(null)} />}</div>;
+  function openCollection(anime: Anime) {
+    if (!user) return setModal("login");
+    setCollectionAnime(anime);
+    setModal("collection");
+  }
+  return <div className={`site ${theme}`}><Header theme={theme} onTheme={toggleTheme} onAuth={setModal} user={user} language={language} onLanguage={changeLanguage} />{view === "home" && <HomeView openAuth={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "catalog" && <CatalogView />}{view === "anime" && <AnimeView slug={slug} openModal={setModal} openCollection={openCollection} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "calendar" && <CalendarView user={user} library={library} saveLibrary={saveLibrary} openAuth={setModal} />}{view === "character" && <CharacterView slug={slug} />}{view === "collections" && <CollectionsView openModal={setModal} user={user} />}{view === "discussions" && <DiscussionsView user={user} />}{view === "news" && <NewsView />}{view === "article" && <ArticleView />}{view === "profile" && <ProfileView user={user} library={library} />}{view === "settings" && <SettingsView user={user} onUserChange={setUser} />}{view === "blueprint" && <BlueprintView />}<Footer />{modal && ["join", "login", "forgot"].includes(modal) && <AuthModal type={modal as "join" | "login" | "forgot"} onClose={() => setModal(null)} switchTo={setModal} />}{modal && ["collection", "create"].includes(modal) && <CollectionModal type={modal as "collection" | "create"} onClose={() => setModal(null)} onSwitch={(type) => setModal(type)} anime={collectionAnime} />}</div>;
 }
