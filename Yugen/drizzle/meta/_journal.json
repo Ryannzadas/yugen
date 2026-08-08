@@ -15,6 +15,13 @@
       "when": 1786228873183,
       "tag": "0001_neat_norrin_radd",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786231563344,
+      "tag": "0002_flashy_thunderbolt_ross",
+      "breakpoints": true
     }
   ]
 }

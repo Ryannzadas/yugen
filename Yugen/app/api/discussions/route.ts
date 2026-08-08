@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
-import { animes, commentLikes, comments, discussions, moderationReports, users } from "../../../db/schema";
+import { animes, commentLikes, comments, discussions, follows, moderationReports, users } from "../../../db/schema";
 import { getSessionIdentity } from "../../session-auth";
 
 function readableSlug(slug: string) {
@@ -42,6 +42,7 @@ export async function GET(request: Request) {
   try {
     const searchParams = new URL(request.url).searchParams;
     const slug = searchParams.get("anime")?.trim();
+    const followingOnly = searchParams.get("following") === "1";
     const episodeParam = searchParams.get("episode");
     const episodeNumber = episodeParam === null ? null : Math.max(1, Math.floor(Number(episodeParam)));
     if (episodeParam !== null && !Number.isFinite(episodeNumber)) {
@@ -53,6 +54,16 @@ export async function GET(request: Request) {
       .innerJoin(animes, eq(discussions.animeId, animes.id))
       .innerJoin(users, eq(comments.authorId, users.id));
 
+    let followedUserIds: string[] = [];
+    if (!slug && followingOnly) {
+      const identity = await getSessionIdentity();
+      if (!identity) return Response.json({ error: "Entre na sua conta para ver as pessoas que você segue." }, { status: 401 });
+      const [viewer] = await db.select({ id: users.id }).from(users).where(eq(users.email, identity.email.toLowerCase())).limit(1);
+      if (!viewer) return Response.json({ comments: [] });
+      followedUserIds = (await db.select({ id: follows.followingId }).from(follows).where(eq(follows.followerId, viewer.id))).map((row) => row.id);
+      if (!followedUserIds.length) return Response.json({ comments: [] });
+    }
+
     const rows = slug
       ? await base.where(and(
           eq(animes.slug, slug),
@@ -60,7 +71,10 @@ export async function GET(request: Request) {
           episodeNumber === null ? isNull(discussions.episodeNumber) : eq(discussions.episodeNumber, episodeNumber),
           isNull(comments.deletedAt),
         )).orderBy(asc(comments.createdAt)).limit(200)
-      : await base.where(isNull(comments.deletedAt)).orderBy(desc(comments.createdAt)).limit(100);
+      : await base.where(and(
+          isNull(comments.deletedAt),
+          followingOnly ? inArray(comments.authorId, followedUserIds) : undefined,
+        )).orderBy(desc(comments.createdAt)).limit(100);
 
     return Response.json({ comments: rows });
   } catch (error) {

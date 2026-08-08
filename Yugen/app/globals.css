@@ -408,10 +408,29 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
 .score-buttons { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; }
 .score-buttons button { min-height: 36px; border: 1px solid var(--line); background: transparent; color: var(--muted); }
 .score-buttons button:hover, .score-buttons button.active { border-color: var(--text); background: var(--text); color: var(--bg); }
-.rating-composer textarea { min-height: 110px; resize: vertical; padding: 15px; border: 1px solid var(--line); outline: 0; background: var(--bg); color: var(--text); }
+.rating-composer > input, .rating-composer textarea { width: 100%; padding: 15px; border: 1px solid var(--line); outline: 0; background: var(--bg); color: var(--text); }
+.rating-composer textarea { min-height: 110px; resize: vertical; }
 .rating-composer footer { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; }
 .spoiler-review p { filter: blur(5px); cursor: pointer; transition: filter .2s; }
 .spoiler-review p:hover { filter: none; }
+.real-reviews { grid-template-columns: 1fr; }
+.real-reviews > .social-empty { grid-column: 1 / -1; min-height: 220px; background: var(--surface); }
+.community-review { min-width: 0; }
+.community-review > header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.review-author { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.review-author > div:last-child { min-width: 0; }
+.review-author b, .review-author small { display: block; }
+.review-author b { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+.review-author small { margin-top: 4px; }
+.review-score { flex: 0 0 auto; color: var(--text); font-family: var(--font-display); font-size: 31px; }
+.review-score small { margin-left: 3px; font-family: var(--font-body); font-size: 10px; }
+.community-review > footer { display: flex; align-items: center; gap: 16px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.community-review > footer button, .community-review > footer a { padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 10px; }
+.community-review > footer button:hover, .community-review > footer button.active, .community-review > footer a:hover { color: var(--text); }
+.review-spoiler { min-height: 110px; }
+.review-notice { width: 100%; margin-top: 18px; }
+.author-link { color: var(--text); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.author-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .discussion-heading { display: flex; align-items: end; justify-content: space-between; }
 .episode-discussion-picker { display: flex; flex-direction: column; min-width: 210px; gap: 7px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
 .episode-discussion-picker select { min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--text); }
@@ -537,6 +556,19 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
 .profile-stats article:last-child { border-right: 0; }
 .profile-stats span, .profile-stats small { color: var(--muted); font-size: 9px; }
 .profile-stats b { margin: 9px 0; font-family: var(--font-display); font-size: 34px; font-weight: 400; }
+.public-profile-page { padding-top: 40px; padding-bottom: 80px; }
+.public-profile-banner .profile-handle { display: block; margin-top: 3px; }
+.following-button { border-color: var(--line-strong); background: var(--surface-2); color: var(--text); }
+.profile-notice { width: 100%; margin-top: 18px; }
+.public-activity { margin-top: 40px; }
+.public-activity > .tabs { margin-bottom: 28px; }
+.profile-review-list, .profile-post-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); background: var(--line); }
+.profile-review-list > a, .profile-post-list > a { display: flex; min-width: 0; min-height: 190px; flex-direction: column; padding: 28px; background: var(--surface); }
+.profile-review-list > a:hover, .profile-post-list > a:hover { background: var(--surface-2); }
+.profile-review-list span, .profile-post-list span { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+.profile-review-list h3 { margin: 18px 0 8px; font-family: var(--font-display); font-size: 24px; font-weight: 400; }
+.profile-review-list p, .profile-post-list p { overflow: hidden; display: -webkit-box; margin: 12px 0; color: var(--muted); line-height: 1.65; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.profile-review-list small, .profile-post-list small { margin-top: auto; color: var(--faint); }
 .achievement-section { padding: 72px 0 20px; }
 .achievement-section .section-heading > span { color: var(--muted); font-size: 10px; }
 .achievement-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
@@ -1012,6 +1044,8 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
   .profile-stats, .achievement-grid { grid-template-columns: 1fr; }
   .profile-stats article { border-right: 0; border-bottom: 1px solid var(--line); }
   .profile-stats article:last-child { border-bottom: 0; }
+  .profile-review-list, .profile-post-list { grid-template-columns: 1fr; }
+  .community-review > footer { align-items: flex-start; flex-wrap: wrap; }
   .achievement-grid article { min-height: 78px; }
   .library-signin { align-items: flex-start; flex-direction: column; }
   .calendar-summary { display: none; }

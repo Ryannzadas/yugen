@@ -6,7 +6,7 @@ import { newsItems, type Anime, type CharacterDetail } from "./data";
 import { fetchAnimeCharacters, fetchAnimeDetail, fetchAnimeList, fetchAnimePage, fetchAnimeSelection, fetchAnimeStaff, fetchCharacterDetail, fetchSeasonNow, type AnimeSelection } from "./jikan";
 import { languageOptions, observeDocumentLanguage, type Language } from "./i18n";
 
-type View = "home" | "catalog" | "anime" | "calendar" | "character" | "collections" | "discussions" | "news" | "article" | "profile" | "settings" | "blueprint";
+type View = "home" | "catalog" | "anime" | "calendar" | "character" | "collections" | "discussions" | "news" | "article" | "profile" | "public-profile" | "settings" | "blueprint";
 type Modal = "join" | "login" | "forgot" | "collection" | "create" | null;
 type SessionUser = {
   displayName: string;
@@ -44,6 +44,37 @@ type CommunityCollection = {
   collaborators: Array<{ username: string; displayName?: string | null; avatarUrl?: string | null }>;
   canEdit: boolean;
   items: Array<{ slug: string; title: string; image?: string | null; episodes?: number | null; year?: number | null; format?: string; season?: string | null; status?: string; rating?: number }>;
+};
+type CommunityReview = {
+  id: string;
+  author: string;
+  authorDisplayName?: string | null;
+  authorAvatar?: string | null;
+  title: string;
+  body: string;
+  score: number;
+  spoiler: boolean;
+  helpfulCount: number;
+  helpfulByViewer: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+type PublicProfileData = {
+  profile: {
+    username: string;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+    bannerUrl?: string | null;
+    bio: string;
+    createdAt: string;
+  };
+  followerCount: number;
+  followingCount: number;
+  isFollowing: boolean;
+  isSelf: boolean;
+  library: LibraryEntry[];
+  reviews: Array<{ id: string; animeSlug: string; animeTitle: string; title: string; body: string; score: number; spoiler: boolean; helpfulCount: number; createdAt: string }>;
+  posts: Array<{ id: string; body: string; createdAt: string; likeCount: number; animeSlug: string; animeTitle: string; episodeNumber?: number | null }>;
 };
 
 function Link({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
@@ -1354,7 +1385,9 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
   }
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") === "discussions") setTab("Discussões");
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (requestedTab === "discussions") setTab("Discussões");
+    if (requestedTab === "reviews") setTab("Avaliações");
   }, []);
 
   const tabs = ["Visão geral", "Relações", "Personagens", "Equipe", "Músicas-tema", "Avaliações", "Discussões"];
@@ -1400,7 +1433,7 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
         {tab === "Personagens" && <CharactersTab anime={anime} />}
         {tab === "Equipe" && <StaffTab anime={anime} />}
         {tab === "Músicas-tema" && <ThemeMusicTab anime={anime} />}
-        {tab === "Avaliações" && <ReviewsTab anime={anime} entry={libraryEntry} updateLibrary={updateLibrary} />}
+        {tab === "Avaliações" && <ReviewsTab anime={anime} entry={libraryEntry} updateLibrary={updateLibrary} user={user} openAuth={() => openModal("login")} />}
         {tab === "Discussões" && <DiscussionTab comments={comments} comment={comment} setComment={setComment} submit={submitComment} onReply={publishComment} message={message} episodes={anime.episodes} episode={discussionEpisode} onEpisode={setDiscussionEpisode} />}
       </section>
     </main>
@@ -1452,11 +1485,80 @@ function PeopleTab({ title, names }: { title: string; names: string[] }) {
   return <section className="tab-panel"><p className="eyebrow">As pessoas por trás da história</p><h2>{title}</h2><div className="people-grid">{names.map((name, index) => <article key={name}><span>0{index + 1}</span><div><b>{name.split(" · ")[0]}</b><small>{name.split(" · ")[1]}</small></div></article>)}</div></section>;
 }
 
-function ReviewsTab({ anime, entry, updateLibrary }: { anime: Anime; entry?: LibraryEntry; updateLibrary: (patch: LibraryPatch) => Promise<void> | void }) {
+function CommunityReviewCard({ review, onHelpful, onReport }: { review: CommunityReview; onHelpful: (review: CommunityReview) => void; onReport: (review: CommunityReview) => void }) {
+  const [revealed, setRevealed] = useState(!review.spoiler);
+  return <article className={`community-review ${review.spoiler && !revealed ? "spoiler-review" : ""}`}>
+    <header><Link href={`/user/${encodeURIComponent(review.author)}`} className="review-author"><div className="avatar has-image" style={profileImageStyle(review.authorAvatar)}>{!review.authorAvatar && review.author.slice(0, 2).toUpperCase()}</div><div><b>{review.authorDisplayName || `@${review.author}`}</b><small>@{review.author} · {discussionTime(review.createdAt)}</small></div></Link><span className="review-score">{review.score}<small>/10</small></span></header>
+    <h3>“{review.title}”</h3>
+    {review.spoiler && !revealed ? <button className="spoiler-cover review-spoiler" onClick={() => setRevealed(true)}><span>◉</span><b>Esta avaliação contém spoilers</b><small>Clique para revelar</small></button> : <p>{review.body}</p>}
+    <footer><button className={review.helpfulByViewer ? "active" : ""} onClick={() => onHelpful(review)}>♡ Útil · {review.helpfulCount}</button><button onClick={() => onReport(review)}>⚑ Denunciar</button><Link href={`/user/${encodeURIComponent(review.author)}`}>Ver perfil ↗</Link></footer>
+  </article>;
+}
+
+function ReviewsTab({ anime, entry, updateLibrary, user, openAuth }: { anime: Anime; entry?: LibraryEntry; updateLibrary: (patch: LibraryPatch) => Promise<void> | void; user: SessionUser | null | undefined; openAuth: () => void }) {
+  const [title, setTitle] = useState("");
   const [review, setReview] = useState("");
+  const [score, setScore] = useState(entry?.score || 0);
   const [spoiler, setSpoiler] = useState(false);
-  const [posted, setPosted] = useState(false);
-  return <section className="tab-panel"><p className="eyebrow">Análises aprofundadas</p><h2>Avaliações da comunidade</h2><div className="rating-composer"><div><span>Sua nota para {anime.title}</span><div className="score-buttons">{Array.from({ length: 10 }, (_, index) => index + 1).map((score) => <button className={entry?.score === score ? "active" : ""} onClick={() => updateLibrary({ score })} key={score}>{score}</button>)}</div></div><textarea value={review} onChange={(event) => setReview(event.target.value)} placeholder="Escreva uma avaliação sobre história, personagens, animação ou trilha sonora…" /><footer><label><input type="checkbox" checked={spoiler} onChange={(event) => setSpoiler(event.target.checked)} /> Contém spoiler</label><button className="primary-button small" onClick={() => { if (review.trim()) setPosted(true); }}>{posted ? "✓ Avaliação publicada" : "Publicar avaliação"}</button></footer></div><div className="review-grid">{posted && <article className={spoiler ? "spoiler-review" : ""}><span>{"★".repeat(entry?.score || 0)}{"☆".repeat(10 - (entry?.score || 0))}</span><h3>“Minha avaliação de {anime.title}”</h3><p>{spoiler ? "Conteúdo marcado como spoiler — clique para revelar." : review}</p><small>— você · agora</small></article>}<article><span>★★★★★</span><h3>“Uma ficção científica lindamente paciente.”</h3><p>Uma obra que confia mais em uma imagem prolongada do que em explicações excessivas.</p><small>— @mika.wav · útil para 184 pessoas</small></article><article><span>★★★★☆</span><h3>“O mistério recompensa a atenção.”</h3><p>O quarto episódio muda o significado de quase todos os elementos visuais repetidos.</p><small>— @noa.exe · útil para 93 pessoas</small></article></div></section>;
+  const [items, setItems] = useState<CommunityReview[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => { if (entry?.score) setScore(entry.score); }, [entry?.score]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    fetch(`/api/reviews?anime=${encodeURIComponent(anime.slug)}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error || "Não foi possível carregar as avaliações."); return data; })
+      .then((data) => setItems(data.reviews || []))
+      .catch((error) => { if (error.name !== "AbortError") setNotice(error instanceof Error ? error.message : "Não foi possível carregar as avaliações."); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [anime.slug]);
+
+  async function chooseScore(value: number) {
+    setScore(value);
+    if (user) await Promise.resolve(updateLibrary({ score: value })).catch(() => undefined);
+  }
+
+  async function publish(event: FormEvent) {
+    event.preventDefault();
+    if (!user) return openAuth();
+    if (!score) return setNotice("Escolha uma nota de 1 a 10.");
+    if (review.trim().length < 20) return setNotice("Escreva pelo menos 20 caracteres.");
+    setSubmitting(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anime: libraryPayload(anime), title, body: review, score, spoiler }) });
+      const data = await response.json() as { review?: CommunityReview; error?: string };
+      if (!response.ok || !data.review) throw new Error(data.error || "Não foi possível publicar a avaliação.");
+      setItems((current) => [data.review!, ...current.filter((item) => item.id !== data.review!.id && item.author !== data.review!.author)]);
+      setTitle("");
+      setReview("");
+      setSpoiler(false);
+      setNotice("Avaliação publicada. Se você já tinha avaliado este anime, ela foi atualizada.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Não foi possível publicar a avaliação.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function updateReview(item: CommunityReview, action: "helpful" | "report") {
+    if (!user) return openAuth();
+    try {
+      const response = await fetch("/api/reviews", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ reviewId: item.id, action }) });
+      const data = await response.json() as { helpful?: boolean; helpfulCount?: number; reported?: boolean; error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível concluir a ação.");
+      if (action === "helpful") setItems((current) => current.map((reviewItem) => reviewItem.id === item.id ? { ...reviewItem, helpfulByViewer: Boolean(data.helpful), helpfulCount: Number(data.helpfulCount) || 0 } : reviewItem));
+      else setNotice("Avaliação enviada para análise da moderação.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Não foi possível concluir a ação.");
+    }
+  }
+
+  return <section className="tab-panel reviews-panel"><p className="eyebrow">Análises aprofundadas</p><h2>Avaliações da comunidade</h2><form className="rating-composer" onSubmit={publish}><div><span>Sua nota para {anime.title}</span><div className="score-buttons">{Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <button type="button" className={score === value ? "active" : ""} onClick={() => chooseScore(value)} key={value}>{value}</button>)}</div></div><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Título da avaliação" minLength={3} maxLength={120} /><textarea value={review} onChange={(event) => setReview(event.target.value)} placeholder="Escreva uma avaliação sobre história, personagens, animação ou trilha sonora…" maxLength={4000} /><footer><label><input type="checkbox" checked={spoiler} onChange={(event) => setSpoiler(event.target.checked)} /> Contém spoiler</label><span>{review.length}/4000</span><button className="primary-button small" type="submit" disabled={submitting}>{submitting ? "Publicando…" : user ? "Publicar avaliação" : "Entrar para avaliar"}</button></footer></form>{notice && <button className="post-notice review-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}<div className="review-grid real-reviews">{loading ? <div className="social-empty"><span>◌</span><h3>Carregando avaliações</h3></div> : items.length ? items.map((item) => <CommunityReviewCard review={item} onHelpful={(selected) => updateReview(selected, "helpful")} onReport={(selected) => updateReview(selected, "report")} key={item.id} />) : <div className="social-empty"><span>○</span><h3>Ainda não há avaliações</h3><p>Publique a primeira avaliação real deste anime.</p></div>}</div></section>;
 }
 
 function DiscussionTab({ comments, comment, setComment, submit, onReply, message, episodes, episode, onEpisode }: { comments: Comment[]; comment: string; setComment: (value: string) => void; submit: (event: FormEvent) => void; onReply: (body: string, parentId?: string | null) => Promise<boolean>; message: string; episodes?: number | null; episode: number | null; onEpisode: (episode: number | null) => void }) {
@@ -1524,7 +1626,7 @@ function CommentItem({ item, replies, onReply }: { item: Comment; replies: Comme
     }
   }
 
-  return <article className="comment" id={`comment-${item.id}`}><div className="avatar has-image" style={profileImageStyle(item.authorAvatar)}>{!item.authorAvatar && item.author.slice(0, 2).toUpperCase()}</div><div><header><b>@{item.author}</b><span>{item.episodeNumber ? `Episódio ${item.episodeNumber} · ` : ""}{discussionTime(item.createdAt)}</span><div className="comment-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções do comentário" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu comment-menu" role="menu"><button onClick={() => choose("copy")} role="menuitem"><span>⧉</span>Copiar link</button><button onClick={() => choose("report")} role="menuitem"><span>⚑</span>Denunciar comentário</button><button onClick={() => choose("hide")} role="menuitem"><span>⊘</span>Ocultar comentário</button></div>}</div></header><SpoilerBody body={item.body} episodeNumber={item.episodeNumber} /><footer><button onClick={toggleLike} className={liked ? "liked" : ""} disabled={busy}>{liked ? "♥" : "♡"} {likes}</button><button onClick={() => setReplying(!replying)}>↩ Responder</button><button onClick={() => choose("report")}>⚑ Denunciar</button></footer>{replying && <form className="quick-reply" onSubmit={submitReply}><input value={reply} onChange={(event) => setReply(event.target.value)} placeholder={`Responder a @${item.author}`} autoFocus /><button type="button" onClick={() => setReplying(false)}>Cancelar</button><button className="primary-button small" type="submit" disabled={busy}>{busy ? "Enviando…" : "Responder"}</button></form>}{notice && <button className="post-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}{replies.map((nestedReply) => <div className="nested" key={nestedReply.id}><div className="avatar has-image" style={profileImageStyle(nestedReply.authorAvatar)}>{!nestedReply.authorAvatar && nestedReply.author.slice(0, 2).toUpperCase()}</div><div><header><b>@{nestedReply.author}</b><span>{discussionTime(nestedReply.createdAt)}</span></header><SpoilerBody body={nestedReply.body} episodeNumber={nestedReply.episodeNumber} /><footer><span>♡ {nestedReply.likeCount}</span><button onClick={() => setReplying(true)}>↩ Responder</button></footer></div></div>)}</div></article>;
+  return <article className="comment" id={`comment-${item.id}`}><div className="avatar has-image" style={profileImageStyle(item.authorAvatar)}>{!item.authorAvatar && item.author.slice(0, 2).toUpperCase()}</div><div><header><Link href={`/user/${encodeURIComponent(item.author)}`} className="author-link">@{item.author}</Link><span>{item.episodeNumber ? `Episódio ${item.episodeNumber} · ` : ""}{discussionTime(item.createdAt)}</span><div className="comment-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções do comentário" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu comment-menu" role="menu"><button onClick={() => choose("copy")} role="menuitem"><span>⧉</span>Copiar link</button><button onClick={() => choose("report")} role="menuitem"><span>⚑</span>Denunciar comentário</button><button onClick={() => choose("hide")} role="menuitem"><span>⊘</span>Ocultar comentário</button></div>}</div></header><SpoilerBody body={item.body} episodeNumber={item.episodeNumber} /><footer><button onClick={toggleLike} className={liked ? "liked" : ""} disabled={busy}>{liked ? "♥" : "♡"} {likes}</button><button onClick={() => setReplying(!replying)}>↩ Responder</button><button onClick={() => choose("report")}>⚑ Denunciar</button></footer>{replying && <form className="quick-reply" onSubmit={submitReply}><input value={reply} onChange={(event) => setReply(event.target.value)} placeholder={`Responder a @${item.author}`} autoFocus /><button type="button" onClick={() => setReplying(false)}>Cancelar</button><button className="primary-button small" type="submit" disabled={busy}>{busy ? "Enviando…" : "Responder"}</button></form>}{notice && <button className="post-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}{replies.map((nestedReply) => <div className="nested" key={nestedReply.id}><div className="avatar has-image" style={profileImageStyle(nestedReply.authorAvatar)}>{!nestedReply.authorAvatar && nestedReply.author.slice(0, 2).toUpperCase()}</div><div><header><Link href={`/user/${encodeURIComponent(nestedReply.author)}`} className="author-link">@{nestedReply.author}</Link><span>{discussionTime(nestedReply.createdAt)}</span></header><SpoilerBody body={nestedReply.body} episodeNumber={nestedReply.episodeNumber} /><footer><span>♡ {nestedReply.likeCount}</span><button onClick={() => setReplying(true)}>↩ Responder</button></footer></div></div>)}</div></article>;
 }
 
 type SocialPost = {
@@ -1629,7 +1731,7 @@ function SocialPostCard({ post, onHide }: { post: SocialPost; onHide: () => void
     <article className="social-post" id={post.id}>
       <div className="feed-avatar has-image" style={profileImageStyle(post.authorAvatar)}>{!post.authorAvatar && post.initials}</div>
       <div className="post-content">
-        <header><div><b>{post.author}</b>{post.verified && <span className="verified" aria-label="Verificado">✓</span>}<span>@{post.handle} · {post.time}</span></div><div className="post-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções da publicação" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu post-menu" role="menu"><button onClick={() => choosePostOption("hide")} role="menuitem"><span>⊘</span>Não tenho interesse</button><button onClick={() => choosePostOption("mute")} role="menuitem"><span>⊖</span>Silenciar @{post.handle}</button><button onClick={() => choosePostOption("report")} role="menuitem"><span>⚑</span>Denunciar publicação</button><button onClick={() => choosePostOption("copy")} role="menuitem"><span>⧉</span>Copiar link</button></div>}</div></header>
+        <header><div><Link href={`/user/${encodeURIComponent(post.handle)}`} className="author-link">{post.author}</Link>{post.verified && <span className="verified" aria-label="Verificado">✓</span>}<span>@{post.handle} · {post.time}</span></div><div className="post-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções da publicação" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu post-menu" role="menu"><button onClick={() => choosePostOption("hide")} role="menuitem"><span>⊘</span>Não tenho interesse</button><button onClick={() => choosePostOption("mute")} role="menuitem"><span>⊖</span>Silenciar @{post.handle}</button><button onClick={() => choosePostOption("report")} role="menuitem"><span>⚑</span>Denunciar publicação</button><button onClick={() => choosePostOption("copy")} role="menuitem"><span>⧉</span>Copiar link</button></div>}</div></header>
         {(post.label || post.episodeNumber) && <span className="post-label">{post.episodeNumber ? `EPISÓDIO ${post.episodeNumber} · SPOILER` : post.label}</span>}
         {post.spoiler && !spoilerVisible ? <button className="spoiler-cover" onClick={() => setSpoilerVisible(true)}><span>◉</span><b>Conteúdo com spoiler</b><small>Clique para revelar</small></button> : <p>{post.body}</p>}
         {post.imageUrl && <div className="post-image" style={{ backgroundImage: `url(${post.imageUrl})` }} role="img" aria-label="Imagem anexada à publicação" />}
@@ -1649,6 +1751,7 @@ function SocialPostCard({ post, onHide }: { post: SocialPost; onHide: () => void
 function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
   const animeFeed = useAnimeFeed("", 12);
   const [section, setSection] = useState<SocialSection>("feed");
+  const [feedMode, setFeedMode] = useState<"recent" | "following">("recent");
   const [draft, setDraft] = useState("");
   const [animeSlug, setAnimeSlug] = useState("");
   const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -1663,10 +1766,15 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
   const [notificationsLoading, setNotificationsLoading] = useState(true);
   const [notificationsError, setNotificationsError] = useState("");
 
-  async function loadDiscussions() {
+  async function loadDiscussions(mode: "recent" | "following" = feedMode) {
+    if (mode === "following" && !user) {
+      setPosts([]);
+      setFeedLoading(false);
+      return;
+    }
     setFeedLoading(true);
     try {
-      const response = await fetch("/api/discussions", { cache: "no-store" });
+      const response = await fetch(mode === "following" ? "/api/discussions?following=1" : "/api/discussions", { cache: "no-store" });
       const data = await response.json() as { comments?: Comment[]; error?: string };
       if (!response.ok) throw new Error(data.error || "Não foi possível carregar as discussões.");
       const rows = data.comments || [];
@@ -1694,8 +1802,9 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
   }
 
   useEffect(() => {
-    loadDiscussions();
-  }, []);
+    if (user === undefined) return;
+    loadDiscussions(feedMode);
+  }, [feedMode, user?.email]);
 
   async function loadNotifications() {
     if (!user) {
@@ -1751,7 +1860,8 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
       const data = await response.json() as { comment?: Comment; error?: string };
       if (!response.ok || !data.comment) throw new Error(data.error || "Não foi possível publicar.");
       setDraft("");
-      await loadDiscussions();
+      setFeedMode("recent");
+      await loadDiscussions("recent");
     } catch (error) {
       setFeedNotice(error instanceof Error ? error.message : "Não foi possível publicar.");
     }
@@ -1760,7 +1870,7 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
   function chooseFeedOption(action: "refresh" | "compact") {
     setFeedMenu(false);
     if (action === "refresh") {
-      loadDiscussions();
+      loadDiscussions(feedMode);
       setFeedNotice("Buscando publicações recentes…");
     } else {
       setCompactFeed((current) => !current);
@@ -1791,12 +1901,12 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
           {feedNotice && <button className="feed-notice" onClick={() => setFeedNotice("")}>{feedNotice}<span>×</span></button>}
 
           {section === "feed" && <>
-            <div className="feed-tabs single"><button className="active">Publicações recentes</button></div>
+            <div className="feed-tabs"><button className={feedMode === "recent" ? "active" : ""} onClick={() => setFeedMode("recent")}>Publicações recentes</button><button className={feedMode === "following" ? "active" : ""} onClick={() => setFeedMode("following")}>Seguindo</button></div>
             <form className="social-composer" onSubmit={publishPost}>
               <div className="feed-avatar has-image" style={profileImageStyle(user?.avatarUrl)}>{user ? (!user.avatarUrl && userInitials(user)) : "YU"}</div>
               <div><textarea id="social-composer" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={user ? "No que você está pensando?" : "Entre para publicar uma discussão"} aria-label="Criar uma publicação" maxLength={4000} disabled={!user} /><div className="composer-footer"><div><select value={animeSlug} onChange={(event) => setAnimeSlug(event.target.value)} aria-label="Vincular anime" disabled={!animeFeed.items.length || !user}><option value="">{animeFeed.loading ? "Carregando Jikan…" : animeFeed.error ? "API indisponível" : "Escolha um anime"}</option>{animeFeed.items.map((anime) => <option value={anime.slug} key={anime.slug}>{anime.title}</option>)}</select></div><span>{draft.length}/4000</span><button className="primary-button small" type="submit" disabled={!user || !draft.trim() || !animeSlug}>Publicar</button></div></div>
             </form>
-            <div className="timeline">{feedLoading ? <div className="social-empty"><span>◌</span><h3>Carregando discussões</h3></div> : visiblePosts.length ? visiblePosts.map(renderPost) : <div className="social-empty"><span>○</span><h3>A comunidade está começando</h3><p>Ainda não há publicações reais. Escolha um anime e inicie a primeira conversa.</p></div>}</div>
+            <div className="timeline">{feedLoading ? <div className="social-empty"><span>◌</span><h3>Carregando discussões</h3></div> : visiblePosts.length ? visiblePosts.map(renderPost) : feedMode === "following" ? <div className="social-empty"><span>◎</span><h3>{user ? "Seu feed Seguindo está vazio" : "Entre para ver quem você segue"}</h3><p>{user ? "Abra um perfil público, siga alguém e as novas publicações aparecerão aqui." : "O feed mostra somente publicações reais das pessoas que você decidiu acompanhar."}</p>{!user && <Link className="primary-button small" href="/api/auth/signin?callbackUrl=/discussions">Entrar</Link>}</div> : <div className="social-empty"><span>○</span><h3>A comunidade está começando</h3><p>Ainda não há publicações reais. Escolha um anime e inicie a primeira conversa.</p></div>}</div>
           </>}
 
           {section === "explore" && <section className="section-panel explore-panel"><div className="panel-intro"><p className="eyebrow">Encontre uma conversa real</p><h2>Explore a comunidade.</h2><p>Pesquise nas publicações que já foram registradas no Yugen.</p></div><label className="explore-search"><span>⌕</span><input value={exploreQuery} onChange={(event) => setExploreQuery(event.target.value)} placeholder="Pesquisar autor, anime ou texto" /></label><div className="timeline explore-results">{explorePosts.length ? explorePosts.map(renderPost) : <div className="social-empty"><span>⌕</span><h3>Nenhuma discussão encontrada</h3><p>Tente outra busca.</p></div>}</div></section>}
@@ -1859,6 +1969,58 @@ function ProfileView({ user, library }: { user: SessionUser | null | undefined; 
   return <main className="profile-page page-shell"><section className="profile-banner"><div className="hero-image" style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : { backgroundImage: "none" }} /><div className="profile-info"><div className={`profile-avatar ${activeUser.avatarUrl ? "has-image" : ""}`} style={profileImageStyle(activeUser.avatarUrl)}>{!activeUser.avatarUrl && userInitials(activeUser)}</div><div><p className="eyebrow">Perfil Yugen</p><h1>{userLabel(activeUser)}</h1><p>{activeUser.bio || "Sua biblioteca, suas descobertas e suas discussões em um só lugar."}</p></div>{user ? <Link className="primary-button" href="/settings">✎ Editar perfil</Link> : <Link className="primary-button" href="/api/auth/signin?callbackUrl=/profile">Entrar</Link>}</div></section><section className="profile-stats"><article><span>Tempo assistido</span><b>{hours} h</b><small>{watchedEpisodes} episódios</small></article><article><span>Animes concluídos</span><b>{counts.Assistidos}</b><small>na sua biblioteca</small></article><article><span>Nota média</span><b>{averageScore}</b><small>{rated} avaliações</small></article><article><span>Favoritos</span><b>{counts.Favoritos}</b><small>histórias especiais</small></article></section><section className="achievement-section"><div className="section-heading"><div><p className="eyebrow">Sua jornada no Yugen</p><h2>Conquistas</h2></div><span>{achievements.filter((item) => item.unlocked).length} de {achievements.length} desbloqueadas</span></div><div className="achievement-grid">{achievements.map((achievement) => <article className={achievement.unlocked ? "unlocked" : "locked"} key={achievement.title}><span>{achievement.icon}</span><div><b>{achievement.title}</b><small>{achievement.copy}</small></div><i>{achievement.unlocked ? "✓" : "○"}</i></article>)}</div></section><section className="profile-library"><div className="tabs">{Object.entries(counts).map(([name, count]) => <button className={tab === name ? "active" : ""} onClick={() => setTab(name)} key={name}>{name} <span>{count}</span></button>)}<label>Ordenar por <select><option>Atualizados recentemente</option><option>Nota</option><option>Título</option></select></label></div>{!user && <div className="library-signin"><p>Entre com sua conta para salvar progresso, notas e favoritos em todos os dispositivos.</p><Link className="primary-button small" href="/api/auth/signin?callbackUrl=/profile">Entrar na conta</Link></div>}{selectedEntries.length ? <div className="catalog-grid profile-grid">{selectedEntries.map((entry) => <div className="library-card-wrap" key={entry.slug}><AnimeCard anime={animeFromLibrary(entry)} /><div className="library-card-meta"><span>{entry.progressEpisodes}/{entry.episodes || "?"} episódios</span><b>{entry.score ? `★ ${entry.score}` : libraryStatusLabel(entry.status)}</b></div></div>)}</div> : feed.loading ? <LoadingCards count={6} grid /> : <EmptyData label="Nenhum anime nesta lista ainda. Abra um anime e atualize seu progresso." />}</section></main>;
 }
 
+function PublicProfileView({ username, user }: { username?: string; user: SessionUser | null | undefined }) {
+  const [data, setData] = useState<PublicProfileData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [followingBusy, setFollowingBusy] = useState(false);
+  const [tab, setTab] = useState<"library" | "reviews" | "posts">("library");
+
+  useEffect(() => {
+    if (!username) return;
+    const controller = new AbortController();
+    setLoading(true);
+    setError("");
+    fetch(`/api/users/${encodeURIComponent(username)}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível carregar o perfil."); return result; })
+      .then((result) => setData(result))
+      .catch((reason) => { if (reason.name !== "AbortError") setError(reason instanceof Error ? reason.message : "Não foi possível carregar o perfil."); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [username, user?.email]);
+
+  async function toggleFollow() {
+    if (!data || followingBusy) return;
+    setFollowingBusy(true);
+    try {
+      const response = await fetch("/api/follows", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: data.profile.username }) });
+      const result = await response.json() as { following?: boolean; followerCount?: number; error?: string };
+      if (!response.ok) throw new Error(result.error || "Não foi possível seguir este perfil.");
+      setData((current) => current ? { ...current, isFollowing: Boolean(result.following), followerCount: Number(result.followerCount) || 0 } : current);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível seguir este perfil.");
+    } finally {
+      setFollowingBusy(false);
+    }
+  }
+
+  if (loading) return <main className="public-profile-page page-shell"><div className="social-empty"><span>◌</span><h2>Carregando perfil</h2></div></main>;
+  if (error && !data) return <main className="public-profile-page page-shell"><div className="social-empty"><span>!</span><h2>Perfil indisponível</h2><p>{error}</p><Link className="primary-button small" href="/discussions">Voltar às discussões</Link></div></main>;
+  if (!data) return null;
+  const profile = data.profile;
+  const completed = data.library.filter((entry) => entry.status === "watched").length;
+  return <main className="public-profile-page page-shell">
+    <section className="profile-banner public-profile-banner"><div className="hero-image" style={profile.bannerUrl ? { backgroundImage: `url(${profile.bannerUrl})` } : { backgroundImage: "none" }} /><div className="profile-info"><div className={`profile-avatar ${profile.avatarUrl ? "has-image" : ""}`} style={profileImageStyle(profile.avatarUrl)}>{!profile.avatarUrl && profile.username.slice(0, 2).toUpperCase()}</div><div><p className="eyebrow">Perfil público</p><h1>{profile.displayName || profile.username}</h1><span className="profile-handle">@{profile.username}</span><p>{profile.bio || "Este membro ainda não escreveu uma biografia."}</p></div>{data.isSelf ? <Link className="primary-button" href="/settings">✎ Editar perfil</Link> : user ? <button className={`primary-button ${data.isFollowing ? "following-button" : ""}`} onClick={toggleFollow} disabled={followingBusy}>{followingBusy ? "Atualizando…" : data.isFollowing ? "✓ Seguindo" : "+ Seguir"}</button> : <Link className="primary-button" href={`/api/auth/signin?callbackUrl=/user/${encodeURIComponent(profile.username)}`}>Entrar para seguir</Link>}</div></section>
+    {error && <button className="post-notice profile-notice" onClick={() => setError("")}>{error}<span>×</span></button>}
+    <section className="profile-stats public-profile-stats"><article><span>Seguidores</span><b>{data.followerCount}</b><small>pessoas acompanham</small></article><article><span>Seguindo</span><b>{data.followingCount}</b><small>perfis acompanhados</small></article><article><span>Assistidos</span><b>{completed}</b><small>animes concluídos</small></article><article><span>Avaliações</span><b>{data.reviews.length}</b><small>atividade recente</small></article></section>
+    <section className="public-activity"><div className="tabs"><button className={tab === "library" ? "active" : ""} onClick={() => setTab("library")}>Biblioteca <span>{data.library.length}</span></button><button className={tab === "reviews" ? "active" : ""} onClick={() => setTab("reviews")}>Avaliações <span>{data.reviews.length}</span></button><button className={tab === "posts" ? "active" : ""} onClick={() => setTab("posts")}>Publicações <span>{data.posts.length}</span></button></div>
+      {tab === "library" && (data.library.length ? <div className="catalog-grid profile-grid">{data.library.map((entry) => <div className="library-card-wrap" key={entry.slug}><AnimeCard anime={animeFromLibrary(entry)} /><div className="library-card-meta"><span>{entry.progressEpisodes}/{entry.episodes || "?"} episódios</span><b>{entry.score ? `★ ${entry.score}` : libraryStatusLabel(entry.status)}</b></div></div>)}</div> : <EmptyData label="Este perfil ainda não adicionou animes à biblioteca." />)}
+      {tab === "reviews" && (data.reviews.length ? <div className="profile-review-list">{data.reviews.map((item) => <Link href={`/anime/${item.animeSlug}?tab=reviews`} key={item.id}><span>{item.score}/10 · {item.animeTitle}</span><h3>{item.title}</h3><p>{item.spoiler ? "Avaliação marcada como spoiler. Abra o anime para revelar." : item.body}</p><small>♡ Útil para {item.helpfulCount} · {discussionTime(item.createdAt)}</small></Link>)}</div> : <EmptyData label="Este perfil ainda não publicou avaliações." />)}
+      {tab === "posts" && (data.posts.length ? <div className="profile-post-list">{data.posts.map((item) => <Link href={`/anime/${item.animeSlug}?tab=discussions`} key={item.id}><span>{item.episodeNumber ? `Episódio ${item.episodeNumber} · ` : ""}{item.animeTitle}</span><p>{item.episodeNumber ? "Publicação protegida contra spoilers. Abra para revelar." : item.body}</p><small>♡ {item.likeCount} · {discussionTime(item.createdAt)}</small></Link>)}</div> : <EmptyData label="Este perfil ainda não iniciou discussões." />)}
+    </section>
+  </main>;
+}
+
 function SettingsView({ user, onUserChange }: { user: SessionUser | null | undefined; onUserChange: (user: SessionUser) => void }) {
   const [saved, setSaved] = useState(false);
   const [danger, setDanger] = useState(false);
@@ -1908,7 +2070,7 @@ function SettingsView({ user, onUserChange }: { user: SessionUser | null | undef
 
 function BlueprintView() {
   const phases = [{ n: "01", title: "Núcleo de descoberta", copy: "Início, catálogo, página do anime, pesquisa, filtros e metadados oficiais." }, { n: "02", title: "Biblioteca pessoal", copy: "Identidade, status, coleções, seguidores, perfil e fluxo de importação." }, { n: "03", title: "Camada social", copy: "Avaliações, tópicos, respostas aninhadas, curtidas, denúncias e moderação." }, { n: "04", title: "Editorial e escala", copy: "CMS de notícias, recomendações, histórico, análises, cache e indexação da busca." }];
-  const tables = ["users", "animes", "studios", "genres", "anime_genres", "user_anime_statuses", "collections", "collection_items", "collection_collaborators", "reviews", "discussions", "comments", "comment_likes", "follows", "moderation_reports", "anime_revisions"];
+  const tables = ["users", "animes", "studios", "genres", "anime_genres", "user_anime_statuses", "collections", "collection_items", "collection_collaborators", "reviews", "review_helpful_votes", "discussions", "comments", "comment_likes", "follows", "moderation_reports", "anime_revisions"];
   return <main className="blueprint-page page-shell"><header className="page-title"><p className="eyebrow">Plano de produto e engenharia</p><h1>Feito para crescer<br /><em>sem precisar recomeçar.</em></h1><p>Uma arquitetura prática: primeiro o catálogo, depois identidade e comunidade.</p></header><section className="stack-grid"><article><span>Interface</span><h2>Next.js + React</h2><p>App Router, renderização no servidor para descoberta e componentes no cliente para filtros, listas e modais.</p></article><article><span>Aplicação</span><h2>Rotas Node.js</h2><p>Rotas internas para o protótipo; a separação em serviços acontece quando o tráfego ou a equipe exigirem.</p></article><article><span>Banco de dados</span><h2>PostgreSQL</h2><p>Fonte relacional da verdade em produção, com filtros indexados, transações e pesquisa de texto completo.</p></article><article><span>Identidade</span><h2>Auth.js + OAuth</h2><p>Email e senha, Google e Apple, com email verificado e autorização no servidor.</p></article></section><section className="schema-section"><div><p className="eyebrow">Modelo relacional</p><h2>Tabelas principais</h2><p>Mantenha os dados dos animes separados da atividade dos usuários. Tabelas de junção tratam relações muitos-para-muitos; comentários aninhados usam um ID de pai opcional.</p></div><div className="schema-map">{tables.map((table, index) => <span key={table}><i>{String(index + 1).padStart(2, "0")}</i>{table}</span>)}</div></section><section className="relation-table"><div className="relation-head"><span>Relação</span><span>Implementação</span><span>Motivo</span></div><div><b>Usuário → status do anime</b><span>user_anime_statuses (user_id, anime_id)</span><span>Um status e uma nota atuais por usuário e título.</span></div><div><b>Anime ↔ gêneros</b><span>anime_genres (anime_id, genre_id)</span><span>Filtragem rápida do catálogo.</span></div><div><b>Coleção ↔ anime</b><span>collection_items + position</span><span>Listas ordenadas e criadas por usuários.</span></div><div><b>Discussão → comentários</b><span>comments.parent_id → comments.id</span><span>Tópicos aninhados sem tabela separada de respostas.</span></div><div><b>Anime → revisões</b><span>anime_revisions + editor_id</span><span>Histórico da wiki, comparação, reversão e moderação.</span></div></section><section className="roadmap"><p className="eyebrow">Ordem de implementação</p><h2>Quatro fases intencionais</h2>{phases.map((phase) => <article key={phase.n}><span>{phase.n}</span><h3>{phase.title}</h3><p>{phase.copy}</p></article>)}</section><section className="decision-note"><p className="eyebrow">Comece aqui</p><h2>Uma experiência completa vale mais que doze páginas vazias.</h2><p>Entregue primeiro Catálogo → Detalhes do anime → “Quero assistir”. Isso valida metadados, filtros, rotas, identidade e uma ação gravada. As discussões vêm depois das regras de propriedade e moderação.</p><Link className="primary-button" href="/catalog">Explorar o produto <span>↗</span></Link></section></main>;
 }
 
@@ -2082,5 +2244,5 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
     setCollectionAnime(anime);
     setModal("collection");
   }
-  return <div className={`site ${theme}`}><Header theme={theme} onTheme={toggleTheme} onAuth={setModal} user={user} language={language} onLanguage={changeLanguage} />{view === "home" && <HomeView openAuth={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "catalog" && <CatalogView />}{view === "anime" && <AnimeView slug={slug} openModal={setModal} openCollection={openCollection} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "calendar" && <CalendarView user={user} library={library} saveLibrary={saveLibrary} openAuth={setModal} />}{view === "character" && <CharacterView slug={slug} />}{view === "collections" && <CollectionsView openModal={setModal} user={user} />}{view === "discussions" && <DiscussionsView user={user} />}{view === "news" && <NewsView />}{view === "article" && <ArticleView />}{view === "profile" && <ProfileView user={user} library={library} />}{view === "settings" && <SettingsView user={user} onUserChange={setUser} />}{view === "blueprint" && <BlueprintView />}<Footer />{modal && ["join", "login", "forgot"].includes(modal) && <AuthModal type={modal as "join" | "login" | "forgot"} onClose={() => setModal(null)} switchTo={setModal} />}{modal && ["collection", "create"].includes(modal) && <CollectionModal type={modal as "collection" | "create"} onClose={() => setModal(null)} onSwitch={(type) => setModal(type)} anime={collectionAnime} />}</div>;
+  return <div className={`site ${theme}`}><Header theme={theme} onTheme={toggleTheme} onAuth={setModal} user={user} language={language} onLanguage={changeLanguage} />{view === "home" && <HomeView openAuth={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "catalog" && <CatalogView />}{view === "anime" && <AnimeView slug={slug} openModal={setModal} openCollection={openCollection} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "calendar" && <CalendarView user={user} library={library} saveLibrary={saveLibrary} openAuth={setModal} />}{view === "character" && <CharacterView slug={slug} />}{view === "collections" && <CollectionsView openModal={setModal} user={user} />}{view === "discussions" && <DiscussionsView user={user} />}{view === "news" && <NewsView />}{view === "article" && <ArticleView />}{view === "profile" && <ProfileView user={user} library={library} />}{view === "public-profile" && <PublicProfileView username={slug} user={user} />}{view === "settings" && <SettingsView user={user} onUserChange={setUser} />}{view === "blueprint" && <BlueprintView />}<Footer />{modal && ["join", "login", "forgot"].includes(modal) && <AuthModal type={modal as "join" | "login" | "forgot"} onClose={() => setModal(null)} switchTo={setModal} />}{modal && ["collection", "create"].includes(modal) && <CollectionModal type={modal as "collection" | "create"} onClose={() => setModal(null)} onSwitch={(type) => setModal(type)} anime={collectionAnime} />}</div>;
 }

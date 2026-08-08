@@ -139,6 +139,15 @@ export const reviews = pgTable("reviews", {
   index("reviews_anime_idx").on(table.animeId, table.createdAt),
 ]);
 
+export const reviewHelpfulVotes = pgTable("review_helpful_votes", {
+  reviewId: text("review_id").notNull().references(() => reviews.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.reviewId, table.userId] }),
+  index("review_helpful_votes_user_idx").on(table.userId),
+]);
+
 export const discussions = pgTable("discussions", {
   id: text("id").primaryKey(),
   animeId: text("anime_id").notNull().references(() => animes.id, { onDelete: "cascade" }),
