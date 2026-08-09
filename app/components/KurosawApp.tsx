@@ -1431,9 +1431,14 @@ type YouTubePlayer = {
   getCurrentTime: () => number;
   seekTo: (seconds: number, allowSeekAhead: boolean) => void;
   setPlaybackRate: (rate: number) => void;
+  getVolume: () => number;
+  setVolume: (volume: number) => void;
   mute: () => void;
   unMute: () => void;
   isMuted: () => boolean;
+  loadModule: (module: "captions") => void;
+  unloadModule: (module: "captions") => void;
+  setOption: (module: "captions", option: "track", value: { languageCode: string }) => void;
   getIframe: () => HTMLIFrameElement;
   destroy: () => void;
 };
@@ -1474,13 +1479,30 @@ function youtubeVideoId(url?: string | null) {
   return url?.match(/(?:embed\/|youtu\.be\/|[?&]v=)([A-Za-z0-9_-]{6,})/)?.[1] || null;
 }
 
-function AnimeTrailerBanner({ anime }: { anime: Anime }) {
+const trailerLanguage: Record<Language, { code: string; locale: string; name: string; volume: string; captionsOn: string; captionsOff: string }> = {
+  pt: { code: "pt", locale: "pt-BR", name: "Português", volume: "Volume do trailer", captionsOn: "Desativar legendas em português", captionsOff: "Ativar legendas em português" },
+  en: { code: "en", locale: "en", name: "English", volume: "Trailer volume", captionsOn: "Turn off English captions", captionsOff: "Turn on English captions" },
+  es: { code: "es", locale: "es", name: "Español", volume: "Volumen del tráiler", captionsOn: "Desactivar subtítulos en español", captionsOff: "Activar subtítulos en español" },
+};
+
+function AnimeTrailerBanner({ anime, language }: { anime: Anime; language: Language }) {
   const videoId = youtubeVideoId(anime.trailerUrl);
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const volumeRef = useRef(65);
   const [playing, setPlaying] = useState(true);
   const [muted, setMuted] = useState(true);
+  const [volume, setVolume] = useState(65);
   const [speed, setSpeed] = useState(1);
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const caption = trailerLanguage[language];
+
+  useEffect(() => {
+    const savedVolume = Number(window.localStorage.getItem("yugen-trailer-volume"));
+    if (!Number.isFinite(savedVolume) || savedVolume < 0 || savedVolume > 100) return;
+    volumeRef.current = savedVolume;
+    setVolume(savedVolume);
+  }, []);
 
   useEffect(() => {
     if (!videoId || !hostRef.current) return;
@@ -1500,7 +1522,11 @@ function AnimeTrailerBanner({ anime }: { anime: Anime }) {
           autoplay: 1,
           mute: 1,
           controls: 0,
+          cc_load_policy: 1,
+          cc_lang_pref: caption.code,
+          hl: caption.locale,
           disablekb: 1,
+          iv_load_policy: 3,
           loop: 1,
           playlist: selectedVideoId,
           playsinline: 1,
@@ -1510,9 +1536,13 @@ function AnimeTrailerBanner({ anime }: { anime: Anime }) {
         },
         events: {
           onReady: ({ target }) => {
+            target.setVolume(volumeRef.current);
             target.mute();
             target.playVideo();
+            target.loadModule("captions");
+            target.setOption("captions", "track", { languageCode: caption.code });
             setMuted(true);
+            setCaptionsEnabled(true);
           },
           onStateChange: ({ data }) => setPlaying(data === 1),
           onPlaybackRateChange: ({ data }) => setSpeed(data),
@@ -1542,7 +1572,7 @@ function AnimeTrailerBanner({ anime }: { anime: Anime }) {
       playerRef.current?.destroy();
       playerRef.current = null;
     };
-  }, [videoId]);
+  }, [caption.code, caption.locale, videoId]);
 
   function togglePlayback() {
     const player = playerRef.current;
@@ -1567,9 +1597,40 @@ function AnimeTrailerBanner({ anime }: { anime: Anime }) {
   function toggleMute() {
     const player = playerRef.current;
     if (!player) return;
-    if (player.isMuted()) player.unMute();
-    else player.mute();
+    if (player.isMuted()) {
+      if (volumeRef.current === 0) {
+        volumeRef.current = 65;
+        setVolume(65);
+        window.localStorage.setItem("yugen-trailer-volume", "65");
+      }
+      player.setVolume(volumeRef.current);
+      player.unMute();
+    } else player.mute();
     setMuted(player.isMuted());
+  }
+
+  function changeVolume(nextVolume: number) {
+    const next = Math.max(0, Math.min(100, nextVolume));
+    const player = playerRef.current;
+    volumeRef.current = next;
+    setVolume(next);
+    window.localStorage.setItem("yugen-trailer-volume", String(next));
+    if (!player) return;
+    player.setVolume(next);
+    if (next === 0) player.mute();
+    else player.unMute();
+    setMuted(next === 0);
+  }
+
+  function toggleCaptions() {
+    const player = playerRef.current;
+    if (!player) return;
+    if (captionsEnabled) player.unloadModule("captions");
+    else {
+      player.loadModule("captions");
+      player.setOption("captions", "track", { languageCode: caption.code });
+    }
+    setCaptionsEnabled((current) => !current);
   }
 
   function openFullscreen() {
@@ -1587,7 +1648,12 @@ function AnimeTrailerBanner({ anime }: { anime: Anime }) {
           <button className="trailer-play" type="button" onClick={togglePlayback} aria-label={playing ? "Pausar trailer" : "Reproduzir trailer"}>{playing ? "❚❚" : "▶"}</button>
           <button type="button" onClick={() => seek(10)} aria-label="Avançar 10 segundos"><span>10s</span> ↷</button>
           <button type="button" onClick={changeSpeed} aria-label={`Alterar velocidade. Velocidade atual ${speed} vezes`}>{speed}×</button>
-          <button type="button" onClick={toggleMute} aria-label={muted ? "Ativar som" : "Desativar som"}>{muted ? "Som" : "Mudo"}</button>
+          <div className="trailer-volume">
+            <button type="button" onClick={toggleMute} aria-label={muted ? "Ativar som" : "Desativar som"}>{muted || volume === 0 ? "🔇" : volume < 50 ? "🔉" : "🔊"}</button>
+            <input type="range" min="0" max="100" step="1" value={volume} onChange={(event) => changeVolume(Number(event.target.value))} aria-label={caption.volume} title={`${caption.volume}: ${volume}%`} />
+            <output aria-hidden="true">{volume}%</output>
+          </div>
+          <button className={captionsEnabled ? "active" : ""} type="button" onClick={toggleCaptions} aria-label={captionsEnabled ? caption.captionsOn : caption.captionsOff} title={`${caption.name}: ${captionsEnabled ? "CC on" : "CC off"}`}>CC · {caption.code.toUpperCase()}</button>
           <button type="button" onClick={openFullscreen} aria-label="Exibir trailer em tela cheia">⛶</button>
         </div>
       )}
@@ -1722,7 +1788,7 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
 
   return (
     <main className="anime-page">
-      <AnimeTrailerBanner anime={anime} />
+      <AnimeTrailerBanner anime={anime} language={language} />
       <section className="anime-summary page-shell">
         <Poster anime={anime} className="anime-poster" />
         <div className="anime-heading">
@@ -2850,7 +2916,13 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
       const savedTheme = window.localStorage.getItem("yugen-theme");
       const savedLanguage = window.localStorage.getItem("yugen-language");
       if (savedTheme) setTheme(savedTheme);
-      if (savedLanguage === "en" || savedLanguage === "es") setLanguage(savedLanguage);
+      if (savedLanguage === "pt" || savedLanguage === "en" || savedLanguage === "es") setLanguage(savedLanguage);
+      else {
+        const computerLanguage = window.navigator.language.toLowerCase();
+        if (computerLanguage.startsWith("en")) setLanguage("en");
+        else if (computerLanguage.startsWith("es")) setLanguage("es");
+        else setLanguage("pt");
+      }
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);

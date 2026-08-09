@@ -323,7 +323,12 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
 .trailer-controls button:hover { background: rgba(255,255,255,.14); }
 .trailer-controls button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .trailer-controls .trailer-play { width: 42px; padding: 0; background: #f5f3ef; color: #0b0b0d; }
+.trailer-controls button.active { background: rgba(255,255,255,.18); }
 .trailer-controls span { font-size: 9px; }
+.trailer-volume { display: flex; height: 36px; align-items: center; gap: 7px; padding-right: 9px; border-radius: 999px; background: rgba(255,255,255,.06); }
+.trailer-volume button { min-width: 36px; padding: 0; }
+.trailer-volume input { width: 78px; height: 4px; margin: 0; cursor: pointer; accent-color: #f5f3ef; }
+.trailer-volume output { min-width: 30px; color: #f5f3ef; font-size: 9px; font-variant-numeric: tabular-nums; }
 .anime-summary { position: relative; display: grid; grid-template-columns: 260px minmax(0, 1fr) auto; gap: 40px; align-items: start; padding-top: 0; padding-bottom: 40px; margin-top: -95px; z-index: 2; }
 .anime-poster { align-self: start; height: auto; aspect-ratio: 3/4.1; border-radius: 7px; border: 1px solid rgba(255,255,255,.18); box-shadow: 0 30px 80px rgba(0,0,0,.5); }
 .anime-heading { padding-bottom: 8px; }
@@ -1228,6 +1233,8 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
   .anime-hero { height: 210px; }
   .trailer-controls { right: 14px; bottom: 16px; left: 14px; justify-content: center; overflow-x: auto; }
   .trailer-controls button { min-width: 36px; height: 34px; padding-inline: 9px; }
+  .trailer-volume { height: 34px; flex: 0 0 auto; }
+  .trailer-volume input { width: 64px; }
   .anime-summary { display: block; margin-top: -45px; }
   .anime-poster { width: 130px; }
   .anime-heading { margin-top: 22px; }
