@@ -1023,7 +1023,6 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
   const recommendationSubtitle = favoriteGenres.length
     ? `Baseado em ${favoriteGenres.map(genrePt).join(", ")} na sua biblioteca`
     : "Seleção popular renovada a cada visita; salve e avalie animes para personalizar";
-  const featuredTitle = featured?.title?.split(" ") || [];
   const translatedSynopsis = useTranslatedSynopsis(featured?.synopsis || featured?.blurb, language);
   const heroSynopsis = useMemo(() => {
     const text = translatedSynopsis.text.trim();
@@ -1055,7 +1054,7 @@ function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth
         <div className="hero-glow" />
         <div className="hero-content">
           <p className="eyebrow"><span /> {heroLoading ? "Atualizando destaques" : heroError ? "Destaques temporariamente indisponíveis" : "Em alta nesta temporada"}</p>
-          <h1>{featuredTitle[0] || (heroError ? "Catálogo" : "Carregando")}<br /><em>{featuredTitle.slice(1).join(" ") || (heroError ? "indisponível" : "anime…")}</em></h1>
+          <h1>{featured?.title || (heroError ? "Catálogo indisponível" : "Carregando anime…")}</h1>
           <p className="hero-copy">{featured ? (featuredDetailPending ? "Carregando sinopse…" : translatedSynopsis.loading ? "Traduzindo sinopse…" : heroSynopsis) : (heroError ? "Não foi possível carregar os destaques agora. Tente novamente em alguns instantes." : "Preparando os destaques mais recentes…")}</p>
           <div className="button-row">
             {featured ? <Link className="primary-button" href={`/anime/${featured.slug}`}>Saiba mais <span>↗</span></Link> : <button className="primary-button" onClick={() => { trendingFeed.retry(); feed.retry(); }}>{heroError ? "Tentar novamente" : "Carregando…"}</button>}
