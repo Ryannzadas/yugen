@@ -1,97 +1,102 @@
 # Yugen
 
-Catálogo e wiki social de animes em Next.js, com dados públicos da Jikan, biblioteca pessoal e discussões.
+> Catálogo, wiki e comunidade de animes em uma única plataforma.
 
-## Stack de produção
+O **Yugen** é uma aplicação web para descobrir animes, consultar informações, organizar uma biblioteca pessoal e participar de discussões com outros usuários. A interface responsiva em preto e branco foi inspirada no conceito visual Kurosaw.
 
-- Next.js 16 + React 19
-- PostgreSQL no Neon
-- Drizzle ORM
-- Auth.js com email/senha e OAuth opcional (Google e Apple)
-- Vercel Blob para avatar e banner do perfil
-- Deploy no Vercel
+[Acessar o Yugen](https://yugen-chi.vercel.app)
 
-## Executar localmente
+## Principais funcionalidades
 
-1. Instale o Node.js 22.
-2. Copie `.env.example` para `.env`.
-3. Preencha `DATABASE_URL` e `AUTH_SECRET`.
-4. Instale e prepare o banco:
+- Home com destaques, recomendações, tendências e animes populares.
+- Catálogo paginado com pesquisa e filtros avançados.
+- Pesquisa de animes e perfis com sugestões em tempo real.
+- Página individual com sinopse, trailer, personagens, equipe e músicas-tema.
+- Interface em português, inglês e espanhol.
+- Biblioteca com progresso, notas, favoritos, metas e lembretes.
+- Importação de listas do MyAnimeList.
+- Perfis públicos, seguidores, avatar e banner personalizados.
+- Coleções pessoais e colaborativas.
+- Discussões, respostas, curtidas, denúncias e notificações.
+- Avaliações da comunidade.
+- Wiki colaborativa com histórico de revisões e moderação.
+- Tema escuro e claro com layout responsivo.
 
-   ```bash
-   npm install
-   npm run db:migrate
-   npm run dev
-   ```
+## Tecnologias
 
-O site fica disponível em `http://localhost:3000`.
+| Camada | Tecnologia |
+| --- | --- |
+| Frontend e backend | Next.js 16 e React 19 |
+| Linguagem | TypeScript |
+| Banco de dados | PostgreSQL no Neon |
+| ORM | Drizzle ORM |
+| Autenticação | Auth.js / NextAuth |
+| Arquivos | Vercel Blob |
+| Dados dos animes | Jikan e Shikimori |
+| Deploy | Vercel |
 
-## Configurar o Neon no Vercel
+## Como executar
 
-1. Abra o projeto no Vercel.
-2. Acesse **Storage** → **Create Database** → **Neon**.
-3. Conecte o banco ao projeto e confirme que `DATABASE_URL` foi criada para Production, Preview e Development.
-4. Em **Settings** → **Environment Variables**, crie `AUTH_SECRET` com uma chave aleatória longa.
-5. Rode a migração uma vez, usando a `DATABASE_URL` do Neon:
+O código da aplicação está diretamente na raiz deste repositório.
 
-   ```bash
-   npm run db:migrate
-   ```
+```powershell
+git clone https://github.com/Ryannzadas/yugen.git
+cd yugen
 
-6. Faça um novo deploy no Vercel.
-
-O diretório raiz do projeto no Vercel deve ser o diretório que contém este `package.json`. Se o GitHub mantiver a pasta `Yugen`, use **Root Directory: `Yugen`**.
-
-## Configurar avatar e banner no Vercel
-
-1. No projeto do Vercel, abra **Storage**.
-2. Clique em **Create Database** e selecione **Blob**.
-3. Crie o armazenamento e conecte-o ao projeto Yugen.
-4. Confirme em **Settings → Environment Variables** que `BLOB_READ_WRITE_TOKEN` foi criado.
-5. Faça um novo deploy.
-
-O upload aceita JPG, PNG, WebP ou GIF de até 5 MB. A URL pública é salva no Neon e aparece no cabeçalho, no perfil e nas discussões.
-
-## Login com Google (opcional)
-
-Crie um cliente OAuth no Google Cloud, use a URL abaixo como callback e adicione as variáveis ao Vercel:
-
-```text
-https://SEU-DOMINIO/api/auth/callback/google
+Copy-Item .env.example .env.local
+npm install
+npm run db:migrate
+npm run dev
 ```
+
+Depois, abra `http://localhost:3000`.
+
+## Variáveis de ambiente
 
 ```env
-AUTH_GOOGLE_ID=...
-AUTH_GOOGLE_SECRET=...
+DATABASE_URL=postgresql://usuario:senha@host/banco?sslmode=require
+AUTH_SECRET=uma-chave-longa-e-aleatoria
+
+# Opcionais
+AUTH_GOOGLE_ID=
+AUTH_GOOGLE_SECRET=
+AUTH_APPLE_ID=
+AUTH_APPLE_SECRET=
+BLOB_READ_WRITE_TOKEN=
 ```
 
-## Login com Apple (opcional)
+Não envie credenciais ou o arquivo `.env.local` para o GitHub.
 
-Configure o serviço no Apple Developer, use a callback abaixo e adicione as variáveis:
+## Banco de dados
 
-```text
-https://SEU-DOMINIO/api/auth/callback/apple
+Para criar ou atualizar as tabelas usando as migrações versionadas:
+
+```powershell
+npm run db:migrate
 ```
 
-```env
-AUTH_APPLE_ID=...
-AUTH_APPLE_SECRET=...
+O banco armazena contas, biblioteca, progresso, coleções, seguidores, avaliações, discussões, notificações, revisões da wiki, moderação, traduções e cache dos provedores externos.
+
+## Validação
+
+```powershell
+npm run typecheck
+npm run lint
+npm run build
 ```
 
-Sem essas variáveis, o login por email e senha continua disponível.
+## Deploy
 
-## Comandos
+O projeto está preparado para o Vercel. Ao importar o repositório, configure:
 
-```bash
-npm run dev          # desenvolvimento
-npm run build        # build de produção
-npm run typecheck    # validação TypeScript
-npm run lint         # ESLint
-npm run db:generate  # cria uma nova migração após alterar o schema
-npm run db:migrate   # aplica as migrações no banco configurado
-npm run db:push      # sincronização direta para desenvolvimento
-```
+- **Root Directory:** raiz do repositório (`.` ou campo vazio)
+- `DATABASE_URL`
+- `AUTH_SECRET`
+- `BLOB_READ_WRITE_TOKEN`, caso utilize avatar e banner.
+- Credenciais Google e Apple, caso utilize login social.
 
-## Dados de animes
+Depois de conectar o Neon e cadastrar as variáveis, aplique as migrações e faça um novo deploy.
 
-Os títulos e imagens da listagem vêm da API pública Shikimori, mantendo os IDs do MyAnimeList. A página individual usa a Jikan para sinopse, trailer, personagens, equipe e músicas-tema, com fallback automático para a Shikimori quando a Jikan estiver indisponível. O catálogo usa paginação: **Carregar mais animes** continua percorrendo os resultados disponíveis sem tentar baixar a base inteira de uma só vez. Dados pessoais, biblioteca e discussões ficam no PostgreSQL do projeto.
+---
+
+Desenvolvido como uma plataforma de descoberta e comunidade para fãs de anime.

@@ -473,23 +473,25 @@ function Poster({ anime, className = "" }: { anime: Anime; className?: string })
   const [failedSource, setFailedSource] = useState({ slug: "", index: 0 });
   const sourceIndex = failedSource.slug === anime.slug ? failedSource.index : 0;
   const source = sources[sourceIndex];
+
+  useEffect(() => {
+    if (!source) return;
+    let active = true;
+    const probe = new window.Image();
+    probe.onerror = () => {
+      if (active) setFailedSource({ slug: anime.slug, index: sourceIndex + 1 });
+    };
+    probe.src = source;
+    return () => { active = false; };
+  }, [anime.slug, source, sourceIndex]);
+
   return (
     <div
       className={`poster-art ${className}`}
       role="img"
       aria-label={`Pôster de ${anime.title}`}
-    >
-      {/* External anime CDNs are loaded directly so their redirects and official fallback sizes keep working. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      {source && <img
-        key={source}
-        src={source}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        onError={() => setFailedSource({ slug: anime.slug, index: sourceIndex + 1 })}
-      />}
-    </div>
+      style={source ? { backgroundImage: `url(${JSON.stringify(source)})` } : undefined}
+    />
   );
 }
 
@@ -964,13 +966,64 @@ function SuspensionBanner({ user }: { user: SessionUser | null | undefined }) {
   return <aside className="suspension-banner" role="status"><span>!</span><div><b>Participação na comunidade suspensa</b><p>Até {new Date(user.suspendedUntil).toLocaleString("pt-BR")} · {user.suspensionReason || "decisão da administração"}. Sua biblioteca continua disponível.</p></div></aside>;
 }
 
+const heroSelectionKey = "yugen:hero-selection:v1";
+const heroPreviousLeadKey = "yugen:hero-previous-lead:v1";
+
+function weightedHeroSelection(items: Anime[], count = 5) {
+  const candidates = items.filter((anime) => anime.backdrop || anime.image).slice(0, 14);
+  if (candidates.length <= count) return candidates;
+
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(heroSelectionKey) || "null") as { createdAt?: number; slugs?: string[] } | null;
+    if (saved?.createdAt && Date.now() - saved.createdAt < 20 * 60 * 1000 && saved.slugs?.length) {
+      const restored = saved.slugs.map((slug) => candidates.find((anime) => anime.slug === slug)).filter((anime): anime is Anime => Boolean(anime));
+      if (restored.length >= Math.min(count, candidates.length)) return restored.slice(0, count);
+    }
+  } catch {
+    // A seleção continua funcionando quando o armazenamento do navegador está bloqueado.
+  }
+
+  const previousLead = (() => {
+    try { return localStorage.getItem(heroPreviousLeadKey); } catch { return null; }
+  })();
+  const pool = [...candidates];
+  const selected: Anime[] = [];
+
+  while (selected.length < count && pool.length) {
+    const eligible = selected.length === 0 && previousLead && pool.length > count
+      ? pool.filter((anime) => anime.slug !== previousLead)
+      : pool;
+    const weighted = eligible.map((anime) => {
+      const rank = candidates.findIndex((candidate) => candidate.slug === anime.slug);
+      return { anime, weight: Math.max(1, (candidates.length - rank) * 1.35 + anime.rating * .7) };
+    });
+    const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+    let cursor = Math.random() * total;
+    const chosen = weighted.find((entry) => ((cursor -= entry.weight) <= 0))?.anime || weighted[0].anime;
+    selected.push(chosen);
+    pool.splice(pool.findIndex((anime) => anime.slug === chosen.slug), 1);
+  }
+
+  try {
+    sessionStorage.setItem(heroSelectionKey, JSON.stringify({ createdAt: Date.now(), slugs: selected.map((anime) => anime.slug) }));
+    if (selected[0]) localStorage.setItem(heroPreviousLeadKey, selected[0].slug);
+  } catch {
+    // Mantém a seleção apenas em memória nesta visita.
+  }
+  return selected;
+}
+
 function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth: (modal: Modal) => void; language: Language; user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary }) {
   const feed = useAnimeSelection("popular", 24);
   const trendingFeed = useAnimeSelection("trending", 18);
   const recommendationFeed = useAnimeSelection("recommended", 25);
   const collectionFeed = useCommunityCollections();
-  const heroItems = useMemo(() => trendingFeed.items.slice(0, 5), [trendingFeed.items]);
+  const [heroItems, setHeroItems] = useState<Anime[]>([]);
   const [heroIndex, setHeroIndex] = useState(0);
+  useEffect(() => {
+    if (!trendingFeed.items.length) return;
+    setHeroItems(weightedHeroSelection(trendingFeed.items));
+  }, [trendingFeed.items]);
   useEffect(() => {
     setHeroIndex((current) => heroItems.length ? current % heroItems.length : 0);
   }, [heroItems.length]);
