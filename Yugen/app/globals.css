@@ -306,12 +306,18 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
 .trailer-controls button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .trailer-controls .trailer-play { width: 42px; padding: 0; background: #f5f3ef; color: #0b0b0d; }
 .trailer-controls span { font-size: 9px; }
-.anime-summary { position: relative; display: grid; grid-template-columns: 260px minmax(0, 1fr) auto; gap: 40px; align-items: end; padding-top: 0; padding-bottom: 40px; margin-top: -95px; z-index: 2; }
-.anime-poster { height: auto; aspect-ratio: 3/4.1; border-radius: 7px; border: 1px solid rgba(255,255,255,.18); box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+.anime-summary { position: relative; display: grid; grid-template-columns: 260px minmax(0, 1fr) auto; gap: 40px; align-items: start; padding-top: 0; padding-bottom: 40px; margin-top: -95px; z-index: 2; }
+.anime-poster { align-self: start; height: auto; aspect-ratio: 3/4.1; border-radius: 7px; border: 1px solid rgba(255,255,255,.18); box-shadow: 0 30px 80px rgba(0,0,0,.5); }
 .anime-heading { padding-bottom: 8px; }
 .anime-heading h1 { margin: 0; font-family: Georgia, serif; font-weight: 400; font-size: clamp(42px, 5vw, 72px); letter-spacing: -.05em; }
 .anime-heading > p:not(.eyebrow) { max-width: 640px; color: var(--muted); line-height: 1.6; }
 .anime-heading .japanese-title { margin: 7px 0 0; color: var(--faint); font-size: 12px; letter-spacing: .04em; }
+.anime-synopsis { max-width: 640px; }
+.anime-synopsis > p { margin: 0; color: var(--muted); line-height: 1.6; }
+.anime-synopsis > p.collapsed { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 5; }
+.synopsis-toggle { margin-top: 10px; padding: 0 0 4px; border: 0; border-bottom: 1px solid var(--line-strong); background: transparent; color: var(--text); font-size: 10px; font-weight: 700; }
+.synopsis-toggle:hover { border-color: var(--text); }
+.synopsis-toggle:focus-visible { outline: 2px solid var(--text); outline-offset: 4px; }
 .rating { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
 .rating b { color: var(--text); }
 .rating span { color: var(--muted); font-size: 11px; }
@@ -319,7 +325,7 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
 .status-buttons button, .collection-button { min-height: 43px; padding: 0 16px; border: 1px solid var(--line); border-radius: 4px; color: var(--text); background: var(--surface-2); font-size: 11px; }
 .status-buttons button.selected { border-color: var(--accent); background: rgba(255,255,255,.1); color: var(--accent); }
 .collection-button { margin-bottom: 8px; }
-.anime-side-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 8px; }
+.anime-side-actions { display: flex; align-self: end; flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 8px; }
 .favorite-button { min-height: 43px; padding: 0 16px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--text); font-size: 11px; }
 .favorite-button.selected { border-color: var(--text); background: var(--text); color: var(--bg); }
 .episode-tracker { max-width: 700px; margin-top: 17px; padding: 15px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, var(--surface) 78%, transparent); }

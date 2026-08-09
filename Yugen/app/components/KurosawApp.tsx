@@ -1471,6 +1471,7 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
   const [wikiOverrides, setWikiOverrides] = useState<WikiChanges>({});
   const [tab, setTab] = useState("Visão geral");
   const [libraryMessage, setLibraryMessage] = useState("");
+  const [synopsisToggle, setSynopsisToggle] = useState({ slug: "", expanded: false });
   const [comments, setComments] = useState<Comment[]>([]);
   const [discussionLocked, setDiscussionLocked] = useState(false);
   const [comment, setComment] = useState("");
@@ -1481,6 +1482,8 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
   const watchState = libraryEntry?.status || "to_watch";
   const progress = libraryEntry?.progressEpisodes || 0;
   const translatedSynopsis = useTranslatedSynopsis(anime.synopsis || anime.blurb, language);
+  const synopsisExpanded = synopsisToggle.slug === anime.slug && synopsisToggle.expanded;
+  const synopsisCanExpand = !translatedSynopsis.loading && translatedSynopsis.text.trim().length > 360;
 
   async function updateLibrary(patch: LibraryPatch) {
     if (!user) return openModal("login");
@@ -1595,7 +1598,16 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
           <h1>{anime.title}</h1>
           {anime.titleJapanese && <p className="japanese-title">{anime.titleJapanese}</p>}
           <div className="rating"><b>★ {anime.rating ? anime.rating.toFixed(2) : "—"}</b><span>{anime.scoredBy ? `${anime.scoredBy.toLocaleString("pt-BR")} avaliações` : "Aguardando avaliações"}</span></div>
-          <p className={translatedSynopsis.loading ? "synopsis-translating" : ""}>{translatedSynopsis.loading ? "Traduzindo sinopse…" : translatedSynopsis.text}</p>
+          <div className="anime-synopsis">
+            <p id="anime-summary-synopsis" className={`${translatedSynopsis.loading ? "synopsis-translating" : ""} ${!synopsisExpanded && synopsisCanExpand ? "collapsed" : ""}`}>{translatedSynopsis.loading ? "Traduzindo sinopse…" : translatedSynopsis.text}</p>
+            {synopsisCanExpand && <button
+              type="button"
+              className="synopsis-toggle"
+              aria-expanded={synopsisExpanded}
+              aria-controls="anime-summary-synopsis"
+              onClick={() => setSynopsisToggle({ slug: anime.slug, expanded: !synopsisExpanded })}
+            >{synopsisExpanded ? "Mostrar menos" : "Mostrar mais"} <span aria-hidden="true">{synopsisExpanded ? "↑" : "↓"}</span></button>}
+          </div>
           {translatedSynopsis.error && language !== "en" && <small className="synopsis-note">Não foi possível traduzir a sinopse. Exibindo o texto original.</small>}
           <div className="status-buttons">{([["watching", "Assistindo"], ["to_watch", "Quero assistir"], ["watched", "Assistido"]] as Array<[LibraryStatus, string]>).map(([state, label]) => <button className={watchState === state && libraryEntry ? "selected" : ""} onClick={() => updateLibrary({ status: state, progressEpisodes: state === "watched" && anime.episodes ? anime.episodes : progress })} key={state}>{watchState === state && libraryEntry ? "✓" : "+"} {label}</button>)}</div>
           <div className="episode-tracker">
