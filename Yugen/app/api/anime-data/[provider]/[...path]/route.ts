@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { after } from "next/server";
 import { getDb } from "@/db";
 import { apiCache } from "@/db/schema";
 
@@ -65,7 +66,7 @@ async function writeCache(input: {
 async function fetchUpstream(url: string, label: string) {
   let lastStatus = 0;
   let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const response = await fetch(url, {
         cache: "no-store",
@@ -73,7 +74,7 @@ async function fetchUpstream(url: string, label: string) {
           accept: "application/json",
           "user-agent": "Yugen-Anime-Wiki/1.0",
         },
-        signal: AbortSignal.timeout(12_000),
+        signal: AbortSignal.timeout(6_000),
       });
       lastStatus = response.status;
       const body = await response.text();
@@ -85,11 +86,28 @@ async function fetchUpstream(url: string, label: string) {
     } catch (error) {
       lastError = error;
     }
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 450 * (attempt + 1)));
+    if (attempt < 1) await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw lastError instanceof Error
     ? lastError
     : new Error(lastStatus ? `${label} respondeu com status ${lastStatus}.` : `${label} está indisponível.`);
+}
+
+async function refreshCache(input: { key: string; provider: Provider; sourceUrl: string; maxAge: number }) {
+  try {
+    const upstream = await fetchUpstream(input.sourceUrl, providers[input.provider].label);
+    const now = new Date();
+    await writeCache({
+      key: input.key,
+      provider: input.provider,
+      payload: upstream.body,
+      statusCode: upstream.status,
+      expiresAt: new Date(now.getTime() + input.maxAge * 1000).toISOString(),
+      staleUntil: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+  } catch {
+    // The current cached response remains available while the provider recovers.
+  }
 }
 
 export async function GET(
@@ -117,6 +135,10 @@ export async function GET(
   if (cached && new Date(cached.expiresAt) > now) {
     return new Response(cached.payload, { status: cached.statusCode, headers: responseHeaders("HIT", maxAge) });
   }
+  if (cached && new Date(cached.staleUntil) > now) {
+    after(() => refreshCache({ key, provider, sourceUrl: sourceUrl.toString(), maxAge }));
+    return new Response(cached.payload, { status: cached.statusCode, headers: responseHeaders("STALE", 60) });
+  }
 
   try {
     const upstream = await fetchUpstream(sourceUrl.toString(), providers[provider].label);
@@ -125,9 +147,6 @@ export async function GET(
     await writeCache({ key, provider, payload: upstream.body, statusCode: upstream.status, expiresAt, staleUntil });
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders("MISS", maxAge) });
   } catch {
-    if (cached && new Date(cached.staleUntil) > now) {
-      return new Response(cached.payload, { status: cached.statusCode, headers: responseHeaders("STALE", 60) });
-    }
     return Response.json(
       { error: "Conteúdo temporariamente indisponível. Tente novamente em alguns instantes." },
       { status: 502, headers: { "cache-control": "no-store", "x-yugen-cache": "ERROR" } },

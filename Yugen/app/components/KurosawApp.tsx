@@ -1335,7 +1335,7 @@ function CatalogView() {
           <button className="clear-button" onClick={clearFilters}>Limpar todos os filtros</button>
         </aside>
         <section>
-          {feed.loading ? <LoadingCards count={10} grid /> : feed.error && !feed.items.length ? <ApiError message={feed.error} retry={feed.retry} /> : results.length ? <div className="catalog-grid">{results.map((anime) => <AnimeCard anime={anime} key={anime.slug} />)}</div> : <div className="empty-state"><b>Nenhum anime encontrado entre os títulos carregados.</b><span>Limpe os filtros ou carregue mais páginas do catálogo.</span></div>}
+          {feed.loading && !feed.items.length ? <LoadingCards count={10} grid /> : feed.error && !feed.items.length ? <ApiError message={feed.error} retry={feed.retry} /> : results.length ? <div className={`catalog-grid ${feed.loading ? "is-refreshing" : ""}`}>{results.map((anime) => <AnimeCard anime={anime} key={anime.slug} />)}</div> : <div className="empty-state"><b>Nenhum anime encontrado entre os títulos carregados.</b><span>Limpe os filtros ou carregue mais páginas do catálogo.</span></div>}
           {!feed.loading && feed.error && feed.items.length > 0 && <ApiError message={feed.error} retry={feed.retry} compact />}
           {!feed.loading && feed.hasNextPage && <button className="wide-button" onClick={feed.loadMore} disabled={feed.loadingMore}>{feed.loadingMore ? "Carregando mais animes…" : "Carregar mais animes"} <span>↓</span></button>}
           {!feed.loading && !feed.hasNextPage && feed.items.length > 0 && <p className="catalog-end">Todos os títulos retornados pela pesquisa foram carregados.</p>}

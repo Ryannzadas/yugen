@@ -2,7 +2,66 @@ import type { Anime, CharacterDetail } from "./data";
 
 const JIKAN_BASE = "/api/anime-data/jikan";
 const SHIKIMORI_API_BASE = "/api/anime-data/shikimori";
-const SHIKIMORI_IMAGE_BASE = "https://shikimori.io";
+const SHIKIMORI_IMAGE_BASE = "https://shikimori.one";
+
+type ClientCacheEntry = { expiresAt: number; value: unknown };
+const clientResponseCache = new Map<string, ClientCacheEntry>();
+const inFlightRequests = new Map<string, Promise<unknown>>();
+
+function clientCacheLifetime(path: string) {
+  return /\/(full|characters|staff)$/.test(path) || /^\/characters\//.test(path)
+    ? 30 * 60 * 1000
+    : 10 * 60 * 1000;
+}
+
+function readClientCache<T>(key: string): T | undefined {
+  const memory = clientResponseCache.get(key);
+  if (memory && memory.expiresAt > Date.now()) return memory.value as T;
+  if (memory) clientResponseCache.delete(key);
+  if (typeof window === "undefined") return undefined;
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(key) || "null") as ClientCacheEntry | null;
+    if (stored && stored.expiresAt > Date.now()) {
+      clientResponseCache.set(key, stored);
+      return stored.value as T;
+    }
+    sessionStorage.removeItem(key);
+  } catch {
+    // A cache failure must never block the catalog.
+  }
+  return undefined;
+}
+
+function writeClientCache(key: string, value: unknown, lifetime: number) {
+  const entry = { expiresAt: Date.now() + lifetime, value };
+  clientResponseCache.set(key, entry);
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify(entry));
+  } catch {
+    // Browsers may reject storage in private mode; memory cache still works.
+  }
+}
+
+async function requestProvider<T>(base: string, provider: string, path: string, signal?: AbortSignal): Promise<T> {
+  const key = `yugen:anime:${provider}:${path}`;
+  const cached = readClientCache<T>(key);
+  if (cached !== undefined) return cached;
+
+  const existing = inFlightRequests.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const request = fetch(`${base}${path}`, { headers: { accept: "application/json" }, signal })
+    .then(async (response) => {
+      if (!response.ok) throw new Error("Não foi possível carregar o conteúdo no momento.");
+      const value = await response.json() as T;
+      writeClientCache(key, value, clientCacheLifetime(path));
+      return value;
+    })
+    .finally(() => inFlightRequests.delete(key));
+  inFlightRequests.set(key, request);
+  return request;
+}
 
 type JikanImage = { image_url?: string; large_image_url?: string };
 type JikanNamed = { mal_id: number; name: string; type?: string };
@@ -102,23 +161,11 @@ export type AnimePageResult = {
 };
 
 async function requestJikan<T>(path: string, signal?: AbortSignal): Promise<T> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(`${JIKAN_BASE}${path}`, { headers: { accept: "application/json" }, signal });
-    if (response.ok) return response.json();
-    if (response.status < 500 && response.status !== 429) break;
-    await new Promise((resolve) => setTimeout(resolve, 700));
-  }
-  throw new Error("Não foi possível carregar o conteúdo no momento.");
+  return requestProvider<T>(JIKAN_BASE, "jikan", path, signal);
 }
 
 async function requestShikimori<T>(path: string, signal?: AbortSignal): Promise<T> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(`${SHIKIMORI_API_BASE}${path}`, { headers: { accept: "application/json" }, signal });
-    if (response.ok) return response.json();
-    if (response.status < 500 && response.status !== 429) break;
-    await new Promise((resolve) => setTimeout(resolve, 600));
-  }
-  throw new Error("Não foi possível carregar o conteúdo no momento.");
+  return requestProvider<T>(SHIKIMORI_API_BASE, "shikimori", path, signal);
 }
 
 function absoluteShikimoriImage(path?: string) {
@@ -291,29 +338,6 @@ function sortSearchResults(anime: Anime[], normalizedQuery: string) {
   });
 }
 
-async function replaceFallbackCovers(items: Anime[], signal?: AbortSignal) {
-  if (!items.length) return items;
-  try {
-    const response = await fetch("/api/anime-covers", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ items: items.map((anime) => ({ id: anime.malId, title: anime.title, year: anime.year })) }),
-      signal,
-    });
-    if (!response.ok) throw new Error("Não foi possível corrigir as capas.");
-    const data = await response.json() as { covers?: Record<string, string[]> };
-    return items.map((anime) => {
-      const covers = anime.malId ? data.covers?.[String(anime.malId)] : undefined;
-      return covers?.length
-        ? { ...anime, image: covers[0], imageSources: covers, backdrop: covers[0] }
-        : { ...anime, image: undefined, imageSources: [], backdrop: undefined };
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
-    return items.map((anime) => ({ ...anime, image: undefined, imageSources: [], backdrop: undefined }));
-  }
-}
-
 export async function fetchAnimePage(query: string, page = 1, limit = 25, signal?: AbortSignal): Promise<AnimePageResult> {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const safePage = Math.max(1, Math.floor(page));
@@ -334,7 +358,7 @@ export async function fetchAnimePage(query: string, page = 1, limit = 25, signal
     const fallbackParams = new URLSearchParams({ order: "popularity", page: String(safePage), limit: String(safeLimit), censored: "true" });
     if (normalizedQuery) fallbackParams.set("search", query.trim());
     const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${fallbackParams.toString()}`, signal);
-    const fallbackItems = await replaceFallbackCovers(response.map(mapShikimoriAnime), signal);
+    const fallbackItems = response.map(mapShikimoriAnime);
     return {
       items: sortSearchResults(fallbackItems, normalizedQuery),
       page: safePage,
@@ -375,7 +399,7 @@ export async function fetchAnimeSelection(selection: AnimeSelection, limit = 18,
     });
     if (selection === "trending") params.set("status", "ongoing");
     const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${params.toString()}`, signal);
-    const items = await replaceFallbackCovers(response.map(mapShikimoriAnime), signal);
+    const items = response.map(mapShikimoriAnime);
     if (selection !== "recommended") return items;
     return items
       .map((anime) => ({ anime, order: Math.random() }))
@@ -451,7 +475,7 @@ export async function fetchSeasonNow(limit = 25, signal?: AbortSignal) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     const params = new URLSearchParams({ status: "ongoing", order: "popularity", page: "1", limit: String(safeLimit), censored: "true" });
     const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${params.toString()}`, signal);
-    return replaceFallbackCovers(response.map(mapShikimoriAnime), signal);
+    return response.map(mapShikimoriAnime);
   }
 }
 
