@@ -463,6 +463,10 @@ function normalizeAnimeImageUrl(value: string) {
   }
 }
 
+function proxiedAnimeImageUrl(value: string) {
+  return `/api/anime-image?url=${encodeURIComponent(value)}`;
+}
+
 function Poster({ anime, className = "" }: { anime: Anime; className?: string }) {
   const sources = useMemo(
     () => [...new Set([anime.image, ...(anime.imageSources || [])]
@@ -473,24 +477,25 @@ function Poster({ anime, className = "" }: { anime: Anime; className?: string })
   const [failedSource, setFailedSource] = useState({ slug: "", index: 0 });
   const sourceIndex = failedSource.slug === anime.slug ? failedSource.index : 0;
   const source = sources[sourceIndex];
+  const displaySource = source ? proxiedAnimeImageUrl(source) : undefined;
 
   useEffect(() => {
-    if (!source) return;
+    if (!displaySource) return;
     let active = true;
     const probe = new window.Image();
     probe.onerror = () => {
       if (active) setFailedSource({ slug: anime.slug, index: sourceIndex + 1 });
     };
-    probe.src = source;
+    probe.src = displaySource;
     return () => { active = false; };
-  }, [anime.slug, source, sourceIndex]);
+  }, [anime.slug, displaySource, sourceIndex]);
 
   return (
     <div
       className={`poster-art ${className}`}
       role="img"
       aria-label={`Pôster de ${anime.title}`}
-      style={source ? { backgroundImage: `url(${JSON.stringify(source)})` } : undefined}
+      style={displaySource ? { backgroundImage: `url(${JSON.stringify(displaySource)})` } : undefined}
     />
   );
 }
