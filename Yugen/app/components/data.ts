@@ -13,6 +13,7 @@ export type Anime = {
   frame: number;
   blurb: string;
   image?: string;
+  imageSources?: string[];
   backdrop?: string;
   episodes?: number | null;
   duration?: string;

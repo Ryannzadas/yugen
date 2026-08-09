@@ -285,3 +285,30 @@ export const animeRevisions = pgTable("anime_revisions", {
   index("anime_revisions_history_idx").on(table.animeId, table.createdAt),
   index("anime_revisions_moderation_idx").on(table.status, table.createdAt),
 ]);
+
+export const apiCache = pgTable("api_cache", {
+  key: text("key").primaryKey(),
+  provider: text("provider", { enum: ["jikan", "shikimori"] }).notNull(),
+  payload: text("payload").notNull(),
+  statusCode: integer("status_code").notNull().default(200),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "string" }).notNull(),
+  staleUntil: timestamp("stale_until", { withTimezone: true, mode: "string" }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+}, (table) => [
+  index("api_cache_provider_expiry_idx").on(table.provider, table.expiresAt),
+  index("api_cache_stale_idx").on(table.staleUntil),
+]);
+
+export const contentTranslations = pgTable("content_translations", {
+  id: text("id").primaryKey(),
+  sourceHash: text("source_hash").notNull(),
+  sourceLanguage: text("source_language", { enum: ["en", "ru"] }).notNull(),
+  targetLanguage: text("target_language", { enum: ["pt", "es", "en"] }).notNull(),
+  sourceText: text("source_text").notNull(),
+  translatedText: text("translated_text").notNull(),
+  provider: text("provider").notNull().default("automatic"),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("content_translations_source_target_uq").on(table.sourceHash, table.targetLanguage),
+  index("content_translations_language_idx").on(table.sourceLanguage, table.targetLanguage, table.updatedAt),
+]);

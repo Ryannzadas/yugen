@@ -43,6 +43,13 @@
       "when": 1786235211835,
       "tag": "0005_even_vanisher",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786236023764,
+      "tag": "0006_public_baron_zemo",
+      "breakpoints": true
     }
   ]
 }

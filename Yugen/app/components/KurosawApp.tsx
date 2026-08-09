@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState, type AnchorHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import Image from "next/image";
 import { signIn, signOut } from "next-auth/react";
 import { newsItems, type Anime, type CharacterDetail } from "./data";
 import { fetchAnimeCharacters, fetchAnimeDetail, fetchAnimeList, fetchAnimePage, fetchAnimeSelection, fetchAnimeStaff, fetchCharacterDetail, fetchSeasonNow, type AnimeSelection } from "./jikan";
@@ -160,7 +161,6 @@ function Link({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorEleme
   return <a href={href} {...props}>{children}</a>;
 }
 
-const positions = ["0% 0%", "33.333% 0%", "66.667% 0%", "100% 0%", "0% 100%", "33.333% 100%", "66.667% 100%", "100% 100%"];
 
 const genreLabels: Record<string, string> = {
   Action: "Ação", Adventure: "Aventura", "Award Winning": "Premiado", Comedy: "Comédia", Drama: "Drama",
@@ -448,20 +448,45 @@ function animeFromCollectionItem(item: CommunityCollection["items"][number]): An
   };
 }
 
+function normalizeAnimeImageUrl(value: string) {
+  const duplicatedOrigin = value.match(/^https?:\/\/shikimori\.(?:io|one)(https?:\/\/.+)$/i);
+  const candidate = duplicatedOrigin?.[1] || value;
+  try {
+    const url = new URL(candidate);
+    if (url.hostname === "shikimori.io") url.hostname = "shikimori.one";
+    else if (url.hostname.endsWith(".shikimori.io")) url.hostname = `${url.hostname.slice(0, -".shikimori.io".length)}.shikimori.one`;
+    return url.toString();
+  } catch {
+    return candidate;
+  }
+}
+
 function Poster({ anime, className = "" }: { anime: Anime; className?: string }) {
-  const externalStyle = anime.image
-    ? { backgroundImage: `url(${anime.image})`, backgroundPosition: "center", backgroundSize: "cover" }
-    : {
-        backgroundImage: `url(/images/poster-atlas-${anime.atlas === 1 ? "one" : "two"}.png)`,
-        backgroundPosition: positions[anime.frame],
-      };
+  const sources = useMemo(
+    () => [...new Set([anime.image, ...(anime.imageSources || [])]
+      .filter((url): url is string => Boolean(url))
+      .map(normalizeAnimeImageUrl))],
+    [anime.image, anime.imageSources],
+  );
+  const [failedSource, setFailedSource] = useState({ slug: "", index: 0 });
+  const sourceIndex = failedSource.slug === anime.slug ? failedSource.index : 0;
+  const source = sources[sourceIndex];
   return (
     <div
       className={`poster-art ${className}`}
-      style={externalStyle}
       role="img"
       aria-label={`Pôster de ${anime.title}`}
-    />
+    >
+      {source && <Image
+        key={source}
+        src={source}
+        alt=""
+        fill
+        sizes="(max-width: 720px) 44vw, (max-width: 1200px) 22vw, 180px"
+        referrerPolicy="no-referrer"
+        onError={() => setFailedSource({ slug: anime.slug, index: sourceIndex + 1 })}
+      />}
+    </div>
   );
 }
 

@@ -1,7 +1,8 @@
 import type { Anime, CharacterDetail } from "./data";
 
-const JIKAN_BASE = "https://api.jikan.moe/v4";
-const SHIKIMORI_BASE = "https://shikimori.io";
+const JIKAN_BASE = "/api/anime-data/jikan";
+const SHIKIMORI_API_BASE = "/api/anime-data/shikimori";
+const SHIKIMORI_IMAGE_BASE = "https://shikimori.one";
 
 type JikanImage = { image_url?: string; large_image_url?: string };
 type JikanNamed = { mal_id: number; name: string; type?: string };
@@ -94,7 +95,7 @@ export type AnimePageResult = {
 async function requestJikan<T>(path: string, signal?: AbortSignal): Promise<T> {
   let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(`${JIKAN_BASE}${path}`, { headers: { accept: "application/json" }, cache: "no-store", signal });
+    const response = await fetch(`${JIKAN_BASE}${path}`, { headers: { accept: "application/json" }, signal });
     if (response.ok) return response.json();
     lastStatus = response.status;
     if (response.status < 500 && response.status !== 429) break;
@@ -106,7 +107,7 @@ async function requestJikan<T>(path: string, signal?: AbortSignal): Promise<T> {
 async function requestShikimori<T>(path: string, signal?: AbortSignal): Promise<T> {
   let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(`${SHIKIMORI_BASE}/api${path}`, { headers: { accept: "application/json" }, cache: "no-store", signal });
+    const response = await fetch(`${SHIKIMORI_API_BASE}${path}`, { headers: { accept: "application/json" }, signal });
     if (response.ok) return response.json();
     lastStatus = response.status;
     if (response.status < 500 && response.status !== 429) break;
@@ -115,9 +116,23 @@ async function requestShikimori<T>(path: string, signal?: AbortSignal): Promise<
   throw new Error(lastStatus ? `As APIs de anime estão indisponíveis (${lastStatus}).` : "As APIs de anime estão indisponíveis.");
 }
 
+function absoluteShikimoriImage(path?: string) {
+  if (!path) return undefined;
+  try {
+    return new URL(path, SHIKIMORI_IMAGE_BASE).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function shikimoriImages(image?: ShikimoriImage) {
+  return [...new Set([image?.original, image?.preview, image?.x96, image?.x48]
+    .map(absoluteShikimoriImage)
+    .filter((url): url is string => Boolean(url)))];
+}
+
 function shikimoriImage(image?: ShikimoriImage) {
-  const path = image?.original || image?.preview || image?.x96;
-  return path ? `${SHIKIMORI_BASE}${path}` : undefined;
+  return shikimoriImages(image)[0];
 }
 
 function shikimoriSeason(date?: string | null) {
@@ -164,6 +179,7 @@ function mapShikimoriAnime(anime: ShikimoriAnime, index = 0): Anime {
   const genres = (anime.genres ?? []).map((item) => item.name);
   const studios = (anime.studios ?? []).map((item) => item.name);
   const image = shikimoriImage(anime.image);
+  const imageSources = shikimoriImages(anime.image);
   const screenshot = shikimoriImage(anime.screenshots?.[0]);
   const video = anime.videos?.find((item) => item.hosting === "youtube") || anime.videos?.[0];
   const youtubeId = video?.url?.match(/(?:youtu\.be\/|v=|embed\/)([A-Za-z0-9_-]{6,})/)?.[1]
@@ -192,6 +208,7 @@ function mapShikimoriAnime(anime: ShikimoriAnime, index = 0): Anime {
     atlas: 1,
     frame: index % 8,
     image,
+    imageSources,
     backdrop: screenshot || image,
     blurb: synopsis,
     synopsis,
@@ -204,10 +221,13 @@ function mapShikimoriAnime(anime: ShikimoriAnime, index = 0): Anime {
 function mapAnime(anime: JikanAnime, index = 0): Anime {
   const genres = (anime.genres ?? []).map((item) => item.name);
   const studios = (anime.studios ?? []).map((item) => item.name);
-  const image = anime.images?.webp?.large_image_url
-    ?? anime.images?.jpg?.large_image_url
-    ?? anime.images?.webp?.image_url
-    ?? anime.images?.jpg?.image_url;
+  const imageSources = [...new Set([
+    anime.images?.jpg?.large_image_url,
+    anime.images?.jpg?.image_url,
+    anime.images?.webp?.large_image_url,
+    anime.images?.webp?.image_url,
+  ].filter((url): url is string => Boolean(url)))];
+  const image = imageSources[0];
   const trailerUrl = anime.trailer?.youtube_id
     ? `https://www.youtube-nocookie.com/embed/${anime.trailer.youtube_id}`
     : anime.trailer?.embed_url?.replace(/([?&])autoplay=1(&|$)/, "$1").replace(/[?&]$/, "") ?? null;
@@ -236,6 +256,7 @@ function mapAnime(anime: JikanAnime, index = 0): Anime {
     atlas: 1,
     frame: index % 8,
     image,
+    imageSources,
     backdrop: image,
     blurb: anime.synopsis || "Sinopse ainda não disponível.",
     synopsis: anime.synopsis || "Sinopse ainda não disponível.",

@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { and, eq } from "drizzle-orm";
+import { getDb } from "../../../db";
+import { contentTranslations } from "../../../db/schema";
+
 type SourceLanguage = "en" | "ru";
 type TargetLanguage = "pt" | "es" | "en";
 
@@ -59,18 +64,65 @@ async function translateWithGoogle(text: string, source: SourceLanguage, target:
 
 async function translateChunk(text: string, source: SourceLanguage, target: TargetLanguage) {
   try {
-    return await translateWithGoogle(text, source, target);
+    return { text: await translateWithGoogle(text, source, target), provider: "google" };
   } catch {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        return await translateWithMyMemory(text, source, target);
+        return { text: await translateWithMyMemory(text, source, target), provider: "mymemory" };
       } catch (error) {
         lastError = error;
         if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
       }
     }
     throw lastError instanceof Error ? lastError : new Error("Translation failed");
+  }
+}
+
+function translationHash(text: string, source: SourceLanguage) {
+  return createHash("sha256").update(`${source}\u0000${text}`, "utf8").digest("hex");
+}
+
+async function readStoredTranslation(sourceHash: string, target: TargetLanguage) {
+  try {
+    const db = await getDb();
+    const [stored] = await db.select().from(contentTranslations).where(and(
+      eq(contentTranslations.sourceHash, sourceHash),
+      eq(contentTranslations.targetLanguage, target),
+    )).limit(1);
+    return stored;
+  } catch {
+    return undefined;
+  }
+}
+
+async function storeTranslation(input: {
+  sourceHash: string;
+  source: SourceLanguage;
+  target: TargetLanguage;
+  sourceText: string;
+  translatedText: string;
+  provider: string;
+}) {
+  try {
+    const now = new Date().toISOString();
+    const db = await getDb();
+    await db.insert(contentTranslations).values({
+      id: `${input.sourceHash}:${input.target}`,
+      sourceHash: input.sourceHash,
+      sourceLanguage: input.source,
+      targetLanguage: input.target,
+      sourceText: input.sourceText,
+      translatedText: input.translatedText,
+      provider: input.provider,
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: [contentTranslations.sourceHash, contentTranslations.targetLanguage],
+      set: { translatedText: input.translatedText, provider: input.provider, updatedAt: now },
+    });
+  } catch {
+    // Translation remains available even before the database migration is applied.
   }
 }
 
@@ -86,15 +138,35 @@ export async function POST(request: Request) {
     if (text.length > 8000) return Response.json({ error: "text is too long" }, { status: 413 });
     if (source === target) return Response.json({ text, cached: true });
 
-    const cacheKey = `${source}:${target}:${text}`;
+    const sourceHash = translationHash(text, source);
+    const cacheKey = `${sourceHash}:${target}`;
     const cached = translationCache.get(cacheKey);
-    if (cached) return Response.json({ text: cached, cached: true });
+    if (cached) return Response.json({ text: cached, cached: true, cache: "memory" });
+
+    const stored = await readStoredTranslation(sourceHash, target);
+    if (stored) {
+      translationCache.set(cacheKey, stored.translatedText);
+      return Response.json({ text: stored.translatedText, cached: true, cache: "database" });
+    }
 
     const translatedChunks: string[] = [];
-    for (const chunk of splitText(text)) translatedChunks.push(await translateChunk(chunk, source, target));
+    const providers = new Set<string>();
+    for (const chunk of splitText(text)) {
+      const translatedChunk = await translateChunk(chunk, source, target);
+      translatedChunks.push(translatedChunk.text);
+      providers.add(translatedChunk.provider);
+    }
     const translated = translatedChunks.join(" ");
     translationCache.set(cacheKey, translated);
-    return Response.json({ text: translated, cached: false });
+    await storeTranslation({
+      sourceHash,
+      source,
+      target,
+      sourceText: text,
+      translatedText: translated,
+      provider: [...providers].join("+") || "automatic",
+    });
+    return Response.json({ text: translated, cached: false, cache: "provider" });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Translation failed" }, { status: 502 });
   }
