@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState, type AnchorHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import Image from "next/image";
 import { signIn, signOut } from "next-auth/react";
 import { newsItems, type Anime, type CharacterDetail } from "./data";
 import { fetchAnimeCharacters, fetchAnimeDetail, fetchAnimeList, fetchAnimePage, fetchAnimeSelection, fetchAnimeStaff, fetchCharacterDetail, fetchSeasonNow, type AnimeSelection } from "./jikan";
@@ -452,10 +451,7 @@ function normalizeAnimeImageUrl(value: string) {
   const duplicatedOrigin = value.match(/^https?:\/\/shikimori\.(?:io|one)(https?:\/\/.+)$/i);
   const candidate = duplicatedOrigin?.[1] || value;
   try {
-    const url = new URL(candidate);
-    if (url.hostname === "shikimori.io") url.hostname = "shikimori.one";
-    else if (url.hostname.endsWith(".shikimori.io")) url.hostname = `${url.hostname.slice(0, -".shikimori.io".length)}.shikimori.one`;
-    return url.toString();
+    return new URL(candidate).toString();
   } catch {
     return candidate;
   }
@@ -477,13 +473,14 @@ function Poster({ anime, className = "" }: { anime: Anime; className?: string })
       role="img"
       aria-label={`Pôster de ${anime.title}`}
     >
-      {source && <Image
+      {/* External anime CDNs are loaded directly so their redirects and official fallback sizes keep working. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {source && <img
         key={source}
         src={source}
         alt=""
-        fill
-        sizes="(max-width: 720px) 44vw, (max-width: 1200px) 22vw, 180px"
-        referrerPolicy="no-referrer"
+        loading="lazy"
+        decoding="async"
         onError={() => setFailedSource({ slug: anime.slug, index: sourceIndex + 1 })}
       />}
     </div>

@@ -2,7 +2,7 @@ import type { Anime, CharacterDetail } from "./data";
 
 const JIKAN_BASE = "/api/anime-data/jikan";
 const SHIKIMORI_API_BASE = "/api/anime-data/shikimori";
-const SHIKIMORI_IMAGE_BASE = "https://shikimori.one";
+const SHIKIMORI_IMAGE_BASE = "https://shikimori.io";
 
 type JikanImage = { image_url?: string; large_image_url?: string };
 type JikanNamed = { mal_id: number; name: string; type?: string };
