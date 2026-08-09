@@ -25,10 +25,15 @@ export const users = pgTable("users", {
   bannerUrl: text("banner_url"),
   bio: text("bio").notNull().default(""),
   role: text("role", { enum: ["member", "moderator", "admin"] }).notNull().default("member"),
+  suspendedAt: timestamp("suspended_at", { withTimezone: true, mode: "string" }),
+  suspendedUntil: timestamp("suspended_until", { withTimezone: true, mode: "string" }),
+  suspensionReason: text("suspension_reason"),
+  suspendedBy: text("suspended_by"),
   ...timestamps,
 }, (table) => [
   uniqueIndex("users_email_uq").on(table.email),
   uniqueIndex("users_username_uq").on(table.username),
+  index("users_suspension_idx").on(table.suspendedUntil),
 ]);
 
 export const studios = pgTable("studios", {
@@ -177,6 +182,10 @@ export const reviews = pgTable("reviews", {
   score: integer("score").notNull(),
   spoiler: boolean("spoiler").notNull().default(false),
   helpfulCount: integer("helpful_count").notNull().default(0),
+  hiddenAt: timestamp("hidden_at", { withTimezone: true, mode: "string" }),
+  deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
+  moderatedBy: text("moderated_by").references(() => users.id, { onDelete: "set null" }),
+  moderationNote: text("moderation_note"),
   ...timestamps,
 }, (table) => [
   uniqueIndex("reviews_author_anime_uq").on(table.authorId, table.animeId),
@@ -212,7 +221,10 @@ export const comments = pgTable("comments", {
   body: text("body").notNull(),
   likeCount: integer("like_count").notNull().default(0),
   editedAt: timestamp("edited_at", { withTimezone: true, mode: "string" }),
+  hiddenAt: timestamp("hidden_at", { withTimezone: true, mode: "string" }),
   deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
+  moderatedBy: text("moderated_by").references(() => users.id, { onDelete: "set null" }),
+  moderationNote: text("moderation_note"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
 }, (table) => [
   index("comments_thread_idx").on(table.discussionId, table.createdAt),
@@ -242,8 +254,20 @@ export const moderationReports = pgTable("moderation_reports", {
   reason: text("reason").notNull(),
   status: text("status", { enum: ["open", "reviewing", "resolved", "dismissed"] }).notNull().default("open"),
   resolvedBy: text("resolved_by").references(() => users.id, { onDelete: "set null" }),
+  resolutionNote: text("resolution_note"),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "string" }),
   ...timestamps,
 }, (table) => [index("reports_status_idx").on(table.status, table.createdAt)]);
+
+export const moderationActions = pgTable("moderation_actions", {
+  id: text("id").primaryKey(),
+  moderatorId: text("moderator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  targetType: text("target_type", { enum: ["report", "comment", "review", "user", "discussion"] }).notNull(),
+  targetId: text("target_id").notNull(),
+  action: text("action").notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+}, (table) => [index("moderation_actions_date_idx").on(table.moderatorId, table.createdAt)]);
 
 export const animeRevisions = pgTable("anime_revisions", {
   id: text("id").primaryKey(),

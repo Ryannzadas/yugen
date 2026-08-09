@@ -125,6 +125,7 @@ export async function POST(request: Request) {
     if (!context) return Response.json({ error: "Entre na sua conta para editar coleções." }, { status: 401 });
     const payload = await request.json() as CollectionPayload;
     const { db, user } = context;
+    if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) return Response.json({ error: "Sua participação na comunidade está temporariamente suspensa." }, { status: 403 });
 
     if (payload.action === "create") {
       const title = payload.title?.trim() || "";

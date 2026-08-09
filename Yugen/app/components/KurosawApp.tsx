@@ -16,6 +16,9 @@ type SessionUser = {
   bannerUrl?: string | null;
   bio?: string;
   role?: "member" | "moderator" | "admin";
+  suspendedUntil?: string | null;
+  suspensionReason?: string | null;
+  suspended?: boolean;
 };
 type SynopsisTranslation = { text: string; loading: boolean; error: boolean };
 type LibraryStatus = "watching" | "to_watch" | "watched";
@@ -121,6 +124,36 @@ type AdvancedLibraryData = {
   };
   reminders: Array<{ slug: string; title: string; image?: string | null; broadcastDay?: string | null; broadcastTime?: string | null; enabled: boolean }>;
   imports: Array<{ id: string; externalUsername: string; importedCount: number; status: "running" | "completed" | "failed"; errorMessage?: string | null; completedAt?: string | null; createdAt: string }>;
+};
+type AdminModerationData = {
+  stats: { openReports: number; suspendedUsers: number; lockedDiscussions: number; totalUsers: number };
+  reports: Array<{
+    id: string;
+    reason: string;
+    status: "open" | "reviewing" | "resolved" | "dismissed";
+    resolutionNote?: string | null;
+    createdAt: string;
+    reporter: string;
+    reporterDisplayName?: string | null;
+    target: {
+      type: "comment" | "review";
+      id?: string | null;
+      title?: string | null;
+      body?: string | null;
+      hidden: boolean;
+      deleted: boolean;
+      authorId?: string | null;
+      author?: string | null;
+      authorDisplayName?: string | null;
+      animeSlug?: string | null;
+      animeTitle?: string | null;
+      discussionId?: string | null;
+      discussionLocked?: boolean | null;
+    };
+  }>;
+  users: Array<{ id: string; username: string; displayName?: string | null; email: string; avatarUrl?: string | null; role: "member" | "moderator" | "admin"; suspended: boolean; suspendedUntil?: string | null; suspensionReason?: string | null; createdAt: string; comments: number; reviews: number }>;
+  discussions: Array<{ id: string; title: string; kind: string; episodeNumber?: number | null; locked: boolean; pinned: boolean; animeSlug: string; animeTitle: string; commentCount: number; updatedAt: string }>;
+  actions: Array<{ id: string; moderator: string; targetType: string; targetId: string; action: string; note?: string | null; createdAt: string }>;
 };
 
 function Link({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
@@ -802,6 +835,7 @@ function Header({ theme, onTheme, onAuth, user, language, onLanguage }: { theme:
   }
 
   return (
+    <>
     <header className="site-header">
       <div className="header-identity">
         {showBack && <button className="back-button" onClick={goBack} aria-label="Voltar" title="Voltar">←</button>}
@@ -842,14 +876,21 @@ function Header({ theme, onTheme, onAuth, user, language, onLanguage }: { theme:
             <Link href="/profile" role="menuitem" onClick={() => setProfileOpen(false)}><span>◎</span> Ver perfil</Link>
             <Link href="/library" role="menuitem" onClick={() => setProfileOpen(false)}><span>▤</span> Biblioteca avançada</Link>
             <Link href="/calendar" role="menuitem" onClick={() => setProfileOpen(false)}><span>◷</span> Calendário</Link>
-            {(user.role === "admin" || user.role === "moderator") && <Link href="/moderation" role="menuitem" onClick={() => setProfileOpen(false)}><span>◇</span> Moderação da Wiki</Link>}
+            {(user.role === "admin" || user.role === "moderator") && <Link href="/moderation" role="menuitem" onClick={() => setProfileOpen(false)}><span>◇</span> {user.role === "admin" ? "Central administrativa" : "Moderação da Wiki"}</Link>}
             <Link href="/settings" role="menuitem" onClick={() => setProfileOpen(false)}><span>✎</span> Editar perfil</Link>
             <button type="button" className="profile-menu-action" role="menuitem" onClick={() => signOut({ redirectTo: "/" })}><span>↪</span> Sair</button>
           </div>}
         </div>}
       </div>
     </header>
+    <SuspensionBanner user={user} />
+    </>
   );
+}
+
+function SuspensionBanner({ user }: { user: SessionUser | null | undefined }) {
+  if (!user?.suspended || !user.suspendedUntil) return null;
+  return <aside className="suspension-banner" role="status"><span>!</span><div><b>Participação na comunidade suspensa</b><p>Até {new Date(user.suspendedUntil).toLocaleString("pt-BR")} · {user.suspensionReason || "decisão da administração"}. Sua biblioteca continua disponível.</p></div></aside>;
 }
 
 function HomeView({ openAuth, language, user, library, saveLibrary }: { openAuth: (modal: Modal) => void; language: Language; user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary }) {
@@ -1224,6 +1265,8 @@ type Comment = {
   animeTitle?: string;
   animePoster?: string | null;
   discussionKind?: "general" | "episode" | "theory" | "recommendation";
+  discussionId?: string;
+  discussionLocked?: boolean;
   episodeNumber?: number | null;
 };
 
@@ -1407,6 +1450,7 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
   const [tab, setTab] = useState("Visão geral");
   const [libraryMessage, setLibraryMessage] = useState("");
   const [comments, setComments] = useState<Comment[]>([]);
+  const [discussionLocked, setDiscussionLocked] = useState(false);
   const [comment, setComment] = useState("");
   const [message, setMessage] = useState("");
   const [discussionEpisode, setDiscussionEpisode] = useState<number | null>(null);
@@ -1472,7 +1516,7 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
     setComments([]);
     fetch(`/api/discussions?${params.toString()}`, { cache: "no-store", signal: controller.signal })
       .then((response) => response.ok ? response.json() : null)
-      .then((data) => setComments(data?.comments ?? []))
+      .then((data) => { setComments(data?.comments ?? []); setDiscussionLocked(Boolean(data?.locked)); })
       .catch(() => undefined);
     return () => controller.abort();
   }, [slug, anime.slug, discussionEpisode]);
@@ -1549,7 +1593,7 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
         {tab === "Equipe" && <StaffTab anime={anime} />}
         {tab === "Músicas-tema" && <ThemeMusicTab anime={anime} />}
         {tab === "Avaliações" && <ReviewsTab anime={anime} entry={libraryEntry} updateLibrary={updateLibrary} user={user} openAuth={() => openModal("login")} />}
-        {tab === "Discussões" && <DiscussionTab comments={comments} comment={comment} setComment={setComment} submit={submitComment} onReply={publishComment} message={message} episodes={anime.episodes} episode={discussionEpisode} onEpisode={setDiscussionEpisode} />}
+        {tab === "Discussões" && <DiscussionTab comments={comments} comment={comment} setComment={setComment} submit={submitComment} onReply={publishComment} message={message} episodes={anime.episodes} episode={discussionEpisode} onEpisode={setDiscussionEpisode} locked={discussionLocked} />}
         {tab === "Wiki" && <WikiTab anime={anime} user={user} openAuth={() => openModal("login")} onApprovedChanges={setWikiOverrides} />}
       </section>
     </main>
@@ -1792,10 +1836,10 @@ function WikiTab({ anime, user, openAuth, onApprovedChanges }: { anime: Anime; u
   return <section className="tab-panel wiki-panel"><div className="wiki-intro"><div><p className="eyebrow">Conhecimento construído pela comunidade</p><h2>Wiki colaborativa</h2><p>Use os dados da Jikan como base e sugira correções. Nada é publicado antes da análise de um moderador.</p></div>{canModerate && <Link className="ghost-button" href="/moderation">Abrir fila de moderação ↗</Link>}</div><div className="wiki-layout"><form className="wiki-editor" onSubmit={submitRevision}><p className="eyebrow">Sugerir uma correção</p><div className="wiki-field-grid"><label>Título<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} required /></label><label>Título em japonês<input value={titleJapanese} onChange={(event) => setTitleJapanese(event.target.value)} maxLength={200} /></label><label>Formato<select value={format} onChange={(event) => setFormat(event.target.value)}><option>TV</option><option>Movie</option><option>OVA</option><option>ONA</option><option>Special</option><option>Music</option></select></label><label>Episódios<input type="number" min="1" max="10000" value={episodes} onChange={(event) => setEpisodes(event.target.value)} /></label><label>Temporada<select value={season} onChange={(event) => setSeason(event.target.value)}><option value="Winter">Inverno</option><option value="Spring">Primavera</option><option value="Summer">Verão</option><option value="Fall">Outono</option><option value="Unknown">Não informada</option></select></label><label>Ano<input type="number" min="1900" max="2200" value={year} onChange={(event) => setYear(event.target.value)} /></label><label className="wide">Status de exibição<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="Currently Airing">Em exibição</option><option value="Finished Airing">Exibição finalizada</option><option value="Not yet aired">Ainda não exibido</option><option value="Unknown">Não informado</option></select></label><label className="wide">Sinopse<textarea value={synopsis} onChange={(event) => setSynopsis(event.target.value)} maxLength={10000} required /></label><label className="wide">Resumo da alteração<textarea value={summary} onChange={(event) => setSummary(event.target.value)} minLength={10} maxLength={300} placeholder="Explique o que foi corrigido e, se possível, informe a fonte." required /></label></div><footer><span>{user ? `Enviando como @${user.username || userLabel(user)}` : "Entre para colaborar com a Wiki."}</span><button className="primary-button small" type="submit" disabled={submitting}>{submitting ? "Enviando…" : user ? "Enviar para análise" : "Entrar para editar"}</button></footer></form><aside className="wiki-guidelines"><p className="eyebrow">Antes de enviar</p><h3>Boas edições são verificáveis.</h3><ol><li>Corrija somente informações objetivas.</li><li>Explique claramente o motivo da mudança.</li><li>Evite opiniões, spoilers e textos copiados integralmente.</li><li>Uma edição aprovada aparece para todos, mas a Jikan continua indicada como fonte original.</li></ol></aside></div>{notice && <button className="post-notice wiki-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}<section className="wiki-history"><div className="section-heading"><div><p className="eyebrow">Transparência editorial</p><h2>Histórico de alterações</h2></div><span>{revisions.length} revisões</span></div>{loading ? <div className="social-empty"><span>◌</span><h3>Carregando histórico</h3></div> : revisions.length ? <div className="wiki-revision-list">{revisions.map((revision) => <WikiRevisionCard revision={revision} canModerate={canModerate} onModerate={moderate} key={revision.id} />)}</div> : <EmptyData label="Nenhuma correção foi sugerida para este anime." />}</section></section>;
 }
 
-function DiscussionTab({ comments, comment, setComment, submit, onReply, message, episodes, episode, onEpisode }: { comments: Comment[]; comment: string; setComment: (value: string) => void; submit: (event: FormEvent) => void; onReply: (body: string, parentId?: string | null) => Promise<boolean>; message: string; episodes?: number | null; episode: number | null; onEpisode: (episode: number | null) => void }) {
+function DiscussionTab({ comments, comment, setComment, submit, onReply, message, episodes, episode, onEpisode, locked }: { comments: Comment[]; comment: string; setComment: (value: string) => void; submit: (event: FormEvent) => void; onReply: (body: string, parentId?: string | null) => Promise<boolean>; message: string; episodes?: number | null; episode: number | null; onEpisode: (episode: number | null) => void; locked: boolean }) {
   const rootComments = comments.filter((item) => !item.parentId);
   const totalEpisodes = Math.max(0, episodes || 0);
-  return <section className="discussion-panel"><div className="discussion-heading"><div><p className="eyebrow">Conversa vinculada a este anime</p><h2>Discussões</h2><p className="discussion-lede">Escolha a conversa geral ou um episódio. Todo comentário de episódio fica protegido contra spoilers.</p></div><label className="episode-discussion-picker"><span>Canal da conversa</span><select value={episode ?? "general"} onChange={(event) => onEpisode(event.target.value === "general" ? null : Number(event.target.value))}><option value="general">Discussão geral</option>{Array.from({ length: totalEpisodes }, (_, index) => index + 1).map((number) => <option value={number} key={number}>Episódio {number}</option>)}</select></label></div>{episode !== null && <div className="episode-spoiler-note"><span>◉</span><div><b>Zona de spoilers · Episódio {episode}</b><p>As mensagens deste canal ficam ocultas até cada pessoa decidir revelar.</p></div></div>}<form className="comment-form" onSubmit={submit}><div className="avatar">YU</div><textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={episode === null ? "Compartilhe uma teoria, observação ou pergunta…" : `Comente o episódio ${episode}…`} aria-label="Novo comentário" /><div><span>{message || (episode === null ? "Esta publicação ficará visível para toda a comunidade." : "Esta publicação será marcada automaticamente como spoiler.")}</span><button className="primary-button small" type="submit">Publicar comentário</button></div></form><div className="comment-list">{rootComments.length ? rootComments.map((item) => <CommentItem key={item.id} item={item} replies={comments.filter((reply) => reply.parentId === item.id)} onReply={onReply} />) : <div className="social-empty discussion-empty"><span>○</span><h3>{episode === null ? "Ainda não há discussões" : `Ainda não há comentários no episódio ${episode}`}</h3><p>Seja a primeira pessoa a começar esta conversa.</p></div>}</div></section>;
+  return <section className="discussion-panel"><div className="discussion-heading"><div><p className="eyebrow">Conversa vinculada a este anime</p><h2>Discussões</h2><p className="discussion-lede">Escolha a conversa geral ou um episódio. Todo comentário de episódio fica protegido contra spoilers.</p></div><label className="episode-discussion-picker"><span>Canal da conversa</span><select value={episode ?? "general"} onChange={(event) => onEpisode(event.target.value === "general" ? null : Number(event.target.value))}><option value="general">Discussão geral</option>{Array.from({ length: totalEpisodes }, (_, index) => index + 1).map((number) => <option value={number} key={number}>Episódio {number}</option>)}</select></label></div>{episode !== null && <div className="episode-spoiler-note"><span>◉</span><div><b>Zona de spoilers · Episódio {episode}</b><p>As mensagens deste canal ficam ocultas até cada pessoa decidir revelar.</p></div></div>}{locked ? <div className="discussion-locked-note"><span>⌧</span><div><b>Discussão bloqueada pela administração</b><p>O conteúdo continua disponível para leitura, mas novas respostas estão desativadas.</p></div></div> : <form className="comment-form" onSubmit={submit}><div className="avatar">YU</div><textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={episode === null ? "Compartilhe uma teoria, observação ou pergunta…" : `Comente o episódio ${episode}…`} aria-label="Novo comentário" /><div><span>{message || (episode === null ? "Esta publicação ficará visível para toda a comunidade." : "Esta publicação será marcada automaticamente como spoiler.")}</span><button className="primary-button small" type="submit">Publicar comentário</button></div></form>}<div className="comment-list">{rootComments.length ? rootComments.map((item) => <CommentItem key={item.id} item={item} replies={comments.filter((reply) => reply.parentId === item.id)} onReply={onReply} locked={locked} />) : <div className="social-empty discussion-empty"><span>○</span><h3>{episode === null ? "Ainda não há discussões" : `Ainda não há comentários no episódio ${episode}`}</h3><p>Seja a primeira pessoa a começar esta conversa.</p></div>}</div></section>;
 }
 
 function SpoilerBody({ body, episodeNumber }: { body: string; episodeNumber?: number | null }) {
@@ -1804,7 +1848,7 @@ function SpoilerBody({ body, episodeNumber }: { body: string; episodeNumber?: nu
   return <button className="spoiler-cover comment-spoiler" type="button" onClick={() => setVisible(true)}><span>◉</span><b>Spoiler do episódio {episodeNumber}</b><small>Clique para revelar esta mensagem</small></button>;
 }
 
-function CommentItem({ item, replies, onReply }: { item: Comment; replies: Comment[]; onReply: (body: string, parentId?: string | null) => Promise<boolean> }) {
+function CommentItem({ item, replies, onReply, locked = false }: { item: Comment; replies: Comment[]; onReply: (body: string, parentId?: string | null) => Promise<boolean>; locked?: boolean }) {
   const [likes, setLikes] = useState(item.likeCount);
   const [liked, setLiked] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1857,7 +1901,7 @@ function CommentItem({ item, replies, onReply }: { item: Comment; replies: Comme
     }
   }
 
-  return <article className="comment" id={`comment-${item.id}`}><div className="avatar has-image" style={profileImageStyle(item.authorAvatar)}>{!item.authorAvatar && item.author.slice(0, 2).toUpperCase()}</div><div><header><Link href={`/user/${encodeURIComponent(item.author)}`} className="author-link">@{item.author}</Link><span>{item.episodeNumber ? `Episódio ${item.episodeNumber} · ` : ""}{discussionTime(item.createdAt)}</span><div className="comment-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções do comentário" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu comment-menu" role="menu"><button onClick={() => choose("copy")} role="menuitem"><span>⧉</span>Copiar link</button><button onClick={() => choose("report")} role="menuitem"><span>⚑</span>Denunciar comentário</button><button onClick={() => choose("hide")} role="menuitem"><span>⊘</span>Ocultar comentário</button></div>}</div></header><SpoilerBody body={item.body} episodeNumber={item.episodeNumber} /><footer><button onClick={toggleLike} className={liked ? "liked" : ""} disabled={busy}>{liked ? "♥" : "♡"} {likes}</button><button onClick={() => setReplying(!replying)}>↩ Responder</button><button onClick={() => choose("report")}>⚑ Denunciar</button></footer>{replying && <form className="quick-reply" onSubmit={submitReply}><input value={reply} onChange={(event) => setReply(event.target.value)} placeholder={`Responder a @${item.author}`} autoFocus /><button type="button" onClick={() => setReplying(false)}>Cancelar</button><button className="primary-button small" type="submit" disabled={busy}>{busy ? "Enviando…" : "Responder"}</button></form>}{notice && <button className="post-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}{replies.map((nestedReply) => <div className="nested" key={nestedReply.id}><div className="avatar has-image" style={profileImageStyle(nestedReply.authorAvatar)}>{!nestedReply.authorAvatar && nestedReply.author.slice(0, 2).toUpperCase()}</div><div><header><Link href={`/user/${encodeURIComponent(nestedReply.author)}`} className="author-link">@{nestedReply.author}</Link><span>{discussionTime(nestedReply.createdAt)}</span></header><SpoilerBody body={nestedReply.body} episodeNumber={nestedReply.episodeNumber} /><footer><span>♡ {nestedReply.likeCount}</span><button onClick={() => setReplying(true)}>↩ Responder</button></footer></div></div>)}</div></article>;
+  return <article className="comment" id={`comment-${item.id}`}><div className="avatar has-image" style={profileImageStyle(item.authorAvatar)}>{!item.authorAvatar && item.author.slice(0, 2).toUpperCase()}</div><div><header><Link href={`/user/${encodeURIComponent(item.author)}`} className="author-link">@{item.author}</Link><span>{item.episodeNumber ? `Episódio ${item.episodeNumber} · ` : ""}{discussionTime(item.createdAt)}</span><div className="comment-menu-wrap"><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Mais opções do comentário" aria-expanded={menuOpen}>•••</button>{menuOpen && <div className="social-menu comment-menu" role="menu"><button onClick={() => choose("copy")} role="menuitem"><span>⧉</span>Copiar link</button><button onClick={() => choose("report")} role="menuitem"><span>⚑</span>Denunciar comentário</button><button onClick={() => choose("hide")} role="menuitem"><span>⊘</span>Ocultar comentário</button></div>}</div></header><SpoilerBody body={item.body} episodeNumber={item.episodeNumber} /><footer><button onClick={toggleLike} className={liked ? "liked" : ""} disabled={busy}>{liked ? "♥" : "♡"} {likes}</button><button onClick={() => setReplying(!replying)} disabled={locked}>↩ Responder</button><button onClick={() => choose("report")}>⚑ Denunciar</button></footer>{replying && !locked && <form className="quick-reply" onSubmit={submitReply}><input value={reply} onChange={(event) => setReply(event.target.value)} placeholder={`Responder a @${item.author}`} autoFocus /><button type="button" onClick={() => setReplying(false)}>Cancelar</button><button className="primary-button small" type="submit" disabled={busy}>{busy ? "Enviando…" : "Responder"}</button></form>}{notice && <button className="post-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}{replies.map((nestedReply) => <div className="nested" key={nestedReply.id}><div className="avatar has-image" style={profileImageStyle(nestedReply.authorAvatar)}>{!nestedReply.authorAvatar && nestedReply.author.slice(0, 2).toUpperCase()}</div><div><header><Link href={`/user/${encodeURIComponent(nestedReply.author)}`} className="author-link">@{nestedReply.author}</Link><span>{discussionTime(nestedReply.createdAt)}</span></header><SpoilerBody body={nestedReply.body} episodeNumber={nestedReply.episodeNumber} /><footer><span>♡ {nestedReply.likeCount}</span><button onClick={() => setReplying(true)} disabled={locked}>↩ Responder</button></footer></div></div>)}</div></article>;
 }
 
 type SocialPost = {
@@ -2433,19 +2477,53 @@ function ModerationRevisionCard({ revision, onDone }: { revision: WikiRevision; 
   return <article className="moderation-card"><div className="moderation-anime"><div className="moderation-poster" style={revision.animePoster ? { backgroundImage: `url(${revision.animePoster})` } : undefined} /><div><span>Revisão de anime</span><h2>{revision.animeTitle}</h2><Link href={`/anime/${revision.animeSlug}?tab=wiki`}>Abrir página do anime ↗</Link></div></div><header><Link href={`/user/${encodeURIComponent(revision.editor)}`} className="review-author"><div className="avatar has-image" style={profileImageStyle(revision.editorAvatar)}>{!revision.editorAvatar && revision.editor.slice(0, 2).toUpperCase()}</div><div><b>{revision.editorDisplayName || `@${revision.editor}`}</b><small>@{revision.editor} · {discussionTime(revision.createdAt)}</small></div></Link><span className="wiki-status pending">Em análise</span></header><h3>{revision.summary}</h3><div className="wiki-diff-list">{Object.entries(revision.changes).map(([field, next]) => <div key={field}><span>{wikiFieldLabels[field] || field}</span><del>{wikiValue(revision.previous[field as keyof WikiChanges])}</del><b>{wikiValue(next)}</b></div>)}</div><label className="moderation-note">Nota da moderação<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Opcional ao aprovar; obrigatória ao rejeitar." /></label>{error && <p className="moderation-error">{error}</p>}<footer><button className="ghost-button" onClick={() => act("reject")} disabled={Boolean(busy)}>{busy === "reject" ? "Rejeitando…" : "Rejeitar"}</button><button className="primary-button small" onClick={() => act("approve")} disabled={Boolean(busy)}>{busy === "approve" ? "Publicando…" : "Aprovar e publicar"}</button></footer></article>;
 }
 
-function ModerationView({ user }: { user: SessionUser | null | undefined }) {
-  const [items, setItems] = useState<WikiRevision[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+type AdminActionPayload = { action: string; targetId: string; mode?: string; status?: string; locked?: boolean; durationDays?: number | null; note?: string };
 
-  async function loadQueue() {
+function AdminReportCard({ report, act, busy }: { report: AdminModerationData["reports"][number]; act: (payload: AdminActionPayload) => Promise<void>; busy: string }) {
+  const [note, setNote] = useState("");
+  const target = report.target;
+  const actionKey = `${report.id}-${target.id}`;
+  const inactive = report.status === "resolved" || report.status === "dismissed";
+  return <article className={`admin-report-card ${inactive ? "closed" : ""}`}><header><div><span className={`admin-status ${report.status}`}>{report.status === "open" ? "Aberta" : report.status === "reviewing" ? "Em análise" : report.status === "resolved" ? "Resolvida" : "Descartada"}</span><small>{discussionTime(report.createdAt)}</small></div><span>{target.type === "comment" ? "Comentário" : "Avaliação"}</span></header><div className="admin-report-context"><p className="eyebrow">Denúncia de @{report.reporter}</p><h3>{report.reason}</h3><blockquote>{target.title && <b>{target.title}</b>}{target.body || "O conteúdo não está mais disponível."}</blockquote><div><span>Publicado por <Link href={`/user/${encodeURIComponent(target.author || "")}`}>@{target.author || "usuário removido"}</Link></span>{target.animeSlug && <Link href={`/anime/${target.animeSlug}`}>{target.animeTitle} ↗</Link>}</div></div>{(target.hidden || target.deleted) && <p className="admin-content-state">{target.deleted ? "Conteúdo excluído pela moderação" : "Conteúdo ocultado pela moderação"}</p>}{!inactive && <><label className="admin-note">Nota interna<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={600} placeholder="Motivo e contexto da decisão…" /></label><footer><button onClick={() => act({ action: "report_status", targetId: report.id, status: "reviewing", note })} disabled={Boolean(busy)}>Analisar</button><button onClick={() => act({ action: target.type === "comment" ? "moderate_comment" : "moderate_review", targetId: target.id || "", mode: "hide", note })} disabled={Boolean(busy)}>Ocultar</button><button className="danger-action" onClick={() => act({ action: target.type === "comment" ? "moderate_comment" : "moderate_review", targetId: target.id || "", mode: "delete", note })} disabled={Boolean(busy)}>Excluir</button>{target.discussionId && <button onClick={() => act({ action: "lock_discussion", targetId: target.discussionId || "", locked: !target.discussionLocked, note })} disabled={Boolean(busy)}>{target.discussionLocked ? "Desbloquear tópico" : "Bloquear tópico"}</button>}<button onClick={() => act({ action: "report_status", targetId: report.id, status: "dismissed", note })} disabled={Boolean(busy)}>Descartar</button></footer></>}{inactive && report.resolutionNote && <p className="admin-resolution"><b>Decisão:</b> {report.resolutionNote}</p>}{inactive && (target.hidden || target.deleted) && <footer><button onClick={() => act({ action: target.type === "comment" ? "moderate_comment" : "moderate_review", targetId: target.id || "", mode: "restore", note: "Conteúdo restaurado pelo painel administrativo." })} disabled={Boolean(busy)}>Restaurar conteúdo</button></footer>}{busy.startsWith(actionKey) && <small>Aplicando ação…</small>}</article>;
+}
+
+function AdminUserCard({ account, act, busy }: { account: AdminModerationData["users"][number]; act: (payload: AdminActionPayload) => Promise<void>; busy: string }) {
+  const [duration, setDuration] = useState("7");
+  const [reason, setReason] = useState("");
+  return <article className="admin-user-card"><div className={`avatar has-image ${account.avatarUrl ? "" : "no-image"}`} style={profileImageStyle(account.avatarUrl)}>{!account.avatarUrl && account.username.slice(0, 2).toUpperCase()}</div><div><Link href={`/user/${encodeURIComponent(account.username)}`}><b>{account.displayName || account.username}</b><span>@{account.username} · {account.email}</span></Link><small>{account.comments} comentários · {account.reviews} avaliações · conta criada em {new Date(account.createdAt).toLocaleDateString("pt-BR")}</small>{account.suspended && <p>Suspenso até {account.suspendedUntil ? new Date(account.suspendedUntil).toLocaleString("pt-BR") : "nova análise"} · {account.suspensionReason}</p>}</div>{account.role === "admin" ? <span className="admin-role-badge">Administrador</span> : account.suspended ? <button className="ghost-button" onClick={() => act({ action: "unsuspend_user", targetId: account.id, note: "Suspensão removida pelo painel administrativo." })} disabled={Boolean(busy)}>Reativar conta</button> : <div className="suspension-controls"><select value={duration} onChange={(event) => setDuration(event.target.value)}><option value="1">1 dia</option><option value="3">3 dias</option><option value="7">7 dias</option><option value="30">30 dias</option><option value="permanent">Permanente</option></select><input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Motivo da suspensão" /><button className="danger-action" onClick={() => act({ action: "suspend_user", targetId: account.id, durationDays: duration === "permanent" ? null : Number(duration), note: reason })} disabled={Boolean(busy)}>Suspender</button></div>}</article>;
+}
+
+function ModerationView({ user }: { user: SessionUser | null | undefined }) {
+  const [wikiItems, setWikiItems] = useState<WikiRevision[]>([]);
+  const [adminData, setAdminData] = useState<AdminModerationData | null>(null);
+  const [tab, setTab] = useState<"reports" | "users" | "discussions" | "wiki" | "audit">("reports");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+
+  async function loadWiki() {
+    const response = await fetch("/api/wiki?mode=moderation", { cache: "no-store" });
+    const data = await response.json() as { revisions?: WikiRevision[]; error?: string };
+    if (!response.ok) throw new Error(data.error || "Não foi possível carregar a fila da Wiki.");
+    setWikiItems(data.revisions || []);
+  }
+
+  async function loadAdmin(query = userSearch) {
+    const response = await fetch(`/api/admin/moderation${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`, { cache: "no-store" });
+    const data = await response.json() as AdminModerationData & { error?: string };
+    if (!response.ok) throw new Error(data.error || "Não foi possível carregar a administração.");
+    setAdminData(data);
+  }
+
+  async function loadAll() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/wiki?mode=moderation", { cache: "no-store" });
-      const data = await response.json() as { revisions?: WikiRevision[]; error?: string };
-      if (!response.ok) throw new Error(data.error || "Não foi possível carregar a moderação.");
-      setItems(data.revisions || []);
+      if (user?.role === "admin") await Promise.all([loadAdmin(), loadWiki()]);
+      else if (user?.role === "moderator") await loadWiki();
+      else throw new Error(user ? "Este painel é reservado à equipe de administração." : "Entre na sua conta para acessar a moderação.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível carregar a moderação.");
     } finally {
@@ -2453,13 +2531,42 @@ function ModerationView({ user }: { user: SessionUser | null | undefined }) {
     }
   }
 
-  useEffect(() => { if (user !== undefined) loadQueue(); }, [user?.email]);
-  return <main className="moderation-page page-shell"><header className="page-title split"><div><p className="eyebrow">Controle editorial</p><h1>Moderação<br /><em>da Wiki.</em></h1><p>Compare cada proposta com o dado atual antes de publicar para toda a comunidade.</p></div>{(user?.role === "admin" || user?.role === "moderator") && <button className="ghost-button" onClick={loadQueue} disabled={loading}>↻ Atualizar fila</button>}</header>{loading ? <div className="social-empty"><span>◌</span><h2>Carregando revisões</h2></div> : error ? <div className="social-empty"><span>!</span><h2>Acesso indisponível</h2><p>{error}</p>{!user && <Link className="primary-button small" href="/api/auth/signin?callbackUrl=/moderation">Entrar</Link>}</div> : items.length ? <section className="moderation-list">{items.map((revision) => <ModerationRevisionCard revision={revision} onDone={(id) => setItems((current) => current.filter((item) => item.id !== id))} key={revision.id} />)}</section> : <div className="social-empty moderation-empty"><span>✓</span><h2>Fila de moderação vazia</h2><p>Não há sugestões aguardando análise.</p></div>}</main>;
+  async function act(payload: AdminActionPayload) {
+    const actionKey = `${payload.targetId}-${payload.targetId}`;
+    setBusy(actionKey);
+    setNotice("");
+    try {
+      const response = await fetch("/api/admin/moderation", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível aplicar esta ação.");
+      setNotice("Ação administrativa aplicada e registrada.");
+      await loadAdmin();
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : "Não foi possível aplicar esta ação.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  useEffect(() => { if (user !== undefined) loadAll(); }, [user?.email, user?.role]);
+
+  if (loading) return <main className="moderation-page page-shell"><div className="social-empty"><span>◌</span><h2>Carregando central de moderação</h2></div></main>;
+  if (error) return <main className="moderation-page page-shell"><div className="social-empty"><span>!</span><h2>Acesso indisponível</h2><p>{error}</p>{!user && <Link className="primary-button small" href="/api/auth/signin?callbackUrl=/moderation">Entrar</Link>}</div></main>;
+  if (user?.role === "moderator") return <main className="moderation-page page-shell"><header className="page-title split"><div><p className="eyebrow">Controle editorial</p><h1>Moderação<br /><em>da Wiki.</em></h1><p>Compare cada proposta com o dado atual antes de publicar para toda a comunidade.</p></div><button className="ghost-button" onClick={loadAll}>↻ Atualizar fila</button></header>{wikiItems.length ? <section className="moderation-list">{wikiItems.map((revision) => <ModerationRevisionCard revision={revision} onDone={(id) => setWikiItems((current) => current.filter((item) => item.id !== id))} key={revision.id} />)}</section> : <div className="social-empty moderation-empty"><span>✓</span><h2>Fila de moderação vazia</h2><p>Não há sugestões aguardando análise.</p></div>}</main>;
+
+  const reports = adminData?.reports || [];
+  return <main className="moderation-page admin-center page-shell"><header className="page-title split"><div><p className="eyebrow">Acesso exclusivo de administrador</p><h1>Central de<br /><em>moderação.</em></h1><p>Analise denúncias reais, proteja a comunidade e mantenha um histórico verificável de cada decisão.</p></div><button className="ghost-button" onClick={loadAll}>↻ Atualizar central</button></header><section className="admin-stats"><article><span>Denúncias abertas</span><b>{adminData?.stats.openReports || 0}</b></article><article><span>Usuários suspensos</span><b>{adminData?.stats.suspendedUsers || 0}</b></article><article><span>Tópicos bloqueados</span><b>{adminData?.stats.lockedDiscussions || 0}</b></article><article><span>Contas listadas</span><b>{adminData?.stats.totalUsers || 0}</b></article></section><nav className="admin-tabs"><button className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}>Denúncias <span>{adminData?.stats.openReports || 0}</span></button><button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>Usuários</button><button className={tab === "discussions" ? "active" : ""} onClick={() => setTab("discussions")}>Discussões</button><button className={tab === "wiki" ? "active" : ""} onClick={() => setTab("wiki")}>Wiki <span>{wikiItems.length}</span></button><button className={tab === "audit" ? "active" : ""} onClick={() => setTab("audit")}>Auditoria</button></nav>{notice && <button className="post-notice admin-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}
+    {tab === "reports" && (reports.length ? <section className="admin-report-list">{reports.map((report) => <AdminReportCard report={report} act={act} busy={busy} key={report.id} />)}</section> : <div className="social-empty moderation-empty"><span>✓</span><h2>Nenhuma denúncia registrada</h2><p>Quando a comunidade denunciar um comentário ou avaliação, o item aparecerá aqui.</p></div>)}
+    {tab === "users" && <section className="admin-users-section"><form onSubmit={(event) => { event.preventDefault(); loadAdmin(userSearch); }}><input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Pesquisar por usuário ou email" /><button className="ghost-button">Pesquisar</button></form><div>{adminData?.users.map((account) => <AdminUserCard account={account} act={act} busy={busy} key={account.id} />)}</div></section>}
+    {tab === "discussions" && <section className="admin-discussion-list">{adminData?.discussions.length ? adminData.discussions.map((thread) => <article key={thread.id}><div><span>{thread.kind === "episode" ? `Episódio ${thread.episodeNumber}` : "Discussão geral"}</span><h3>{thread.title}</h3><p>{thread.animeTitle} · {thread.commentCount} comentários · atualizada {discussionTime(thread.updatedAt)}</p></div><Link href={`/anime/${thread.animeSlug}?tab=discussions`}>Abrir ↗</Link><button className={thread.locked ? "primary-button small" : "ghost-button"} onClick={() => act({ action: "lock_discussion", targetId: thread.id, locked: !thread.locked, note: thread.locked ? "Discussão reaberta pelo painel administrativo." : "Discussão bloqueada pelo painel administrativo." })}>{thread.locked ? "Desbloquear" : "Bloquear"}</button></article>) : <div className="social-empty"><h2>Nenhuma discussão criada</h2></div>}</section>}
+    {tab === "wiki" && (wikiItems.length ? <section className="moderation-list">{wikiItems.map((revision) => <ModerationRevisionCard revision={revision} onDone={(id) => setWikiItems((current) => current.filter((item) => item.id !== id))} key={revision.id} />)}</section> : <div className="social-empty moderation-empty"><span>✓</span><h2>Fila da Wiki vazia</h2><p>Não há sugestões aguardando análise.</p></div>)}
+    {tab === "audit" && <section className="admin-audit-list">{adminData?.actions.length ? adminData.actions.map((item) => <article key={item.id}><span>{item.targetType}</span><div><b>{item.action.replaceAll("_", " ")}</b><p>{item.note || "Sem nota adicional."}</p></div><small>@{item.moderator}<br />{new Date(item.createdAt).toLocaleString("pt-BR")}</small></article>) : <div className="social-empty"><h2>Nenhuma ação registrada</h2></div>}</section>}
+  </main>;
 }
 
 function BlueprintView() {
   const phases = [{ n: "01", title: "Núcleo de descoberta", copy: "Início, catálogo, página do anime, pesquisa, filtros e metadados oficiais." }, { n: "02", title: "Biblioteca pessoal", copy: "Identidade, status, coleções, seguidores, perfil e fluxo de importação." }, { n: "03", title: "Camada social", copy: "Avaliações, tópicos, respostas aninhadas, curtidas, denúncias e moderação." }, { n: "04", title: "Editorial e escala", copy: "CMS de notícias, recomendações, histórico, análises, cache e indexação da busca." }];
-  const tables = ["users", "animes", "studios", "genres", "anime_genres", "user_anime_statuses", "collections", "collection_items", "collection_collaborators", "reviews", "review_helpful_votes", "discussions", "comments", "comment_likes", "follows", "moderation_reports", "anime_revisions"];
+  const tables = ["users", "animes", "studios", "genres", "anime_genres", "user_anime_statuses", "collections", "collection_items", "collection_collaborators", "reviews", "review_helpful_votes", "discussions", "comments", "comment_likes", "follows", "moderation_reports", "moderation_actions", "anime_revisions"];
   return <main className="blueprint-page page-shell"><header className="page-title"><p className="eyebrow">Plano de produto e engenharia</p><h1>Feito para crescer<br /><em>sem precisar recomeçar.</em></h1><p>Uma arquitetura prática: primeiro o catálogo, depois identidade e comunidade.</p></header><section className="stack-grid"><article><span>Interface</span><h2>Next.js + React</h2><p>App Router, renderização no servidor para descoberta e componentes no cliente para filtros, listas e modais.</p></article><article><span>Aplicação</span><h2>Rotas Node.js</h2><p>Rotas internas para o protótipo; a separação em serviços acontece quando o tráfego ou a equipe exigirem.</p></article><article><span>Banco de dados</span><h2>PostgreSQL</h2><p>Fonte relacional da verdade em produção, com filtros indexados, transações e pesquisa de texto completo.</p></article><article><span>Identidade</span><h2>Auth.js + OAuth</h2><p>Email e senha, Google e Apple, com email verificado e autorização no servidor.</p></article></section><section className="schema-section"><div><p className="eyebrow">Modelo relacional</p><h2>Tabelas principais</h2><p>Mantenha os dados dos animes separados da atividade dos usuários. Tabelas de junção tratam relações muitos-para-muitos; comentários aninhados usam um ID de pai opcional.</p></div><div className="schema-map">{tables.map((table, index) => <span key={table}><i>{String(index + 1).padStart(2, "0")}</i>{table}</span>)}</div></section><section className="relation-table"><div className="relation-head"><span>Relação</span><span>Implementação</span><span>Motivo</span></div><div><b>Usuário → status do anime</b><span>user_anime_statuses (user_id, anime_id)</span><span>Um status e uma nota atuais por usuário e título.</span></div><div><b>Anime ↔ gêneros</b><span>anime_genres (anime_id, genre_id)</span><span>Filtragem rápida do catálogo.</span></div><div><b>Coleção ↔ anime</b><span>collection_items + position</span><span>Listas ordenadas e criadas por usuários.</span></div><div><b>Discussão → comentários</b><span>comments.parent_id → comments.id</span><span>Tópicos aninhados sem tabela separada de respostas.</span></div><div><b>Anime → revisões</b><span>anime_revisions + editor_id</span><span>Histórico da wiki, comparação, reversão e moderação.</span></div></section><section className="roadmap"><p className="eyebrow">Ordem de implementação</p><h2>Quatro fases intencionais</h2>{phases.map((phase) => <article key={phase.n}><span>{phase.n}</span><h3>{phase.title}</h3><p>{phase.copy}</p></article>)}</section><section className="decision-note"><p className="eyebrow">Comece aqui</p><h2>Uma experiência completa vale mais que doze páginas vazias.</h2><p>Entregue primeiro Catálogo → Detalhes do anime → “Quero assistir”. Isso valida metadados, filtros, rotas, identidade e uma ação gravada. As discussões vêm depois das regras de propriedade e moderação.</p><Link className="primary-button" href="/catalog">Explorar o produto <span>↗</span></Link></section></main>;
 }
 

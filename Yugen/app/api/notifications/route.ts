@@ -36,7 +36,7 @@ export async function GET() {
         .innerJoin(replyAuthors, eq(comments.authorId, replyAuthors.id))
         .innerJoin(discussions, eq(comments.discussionId, discussions.id))
         .innerJoin(animes, eq(discussions.animeId, animes.id))
-        .where(and(eq(parentComments.authorId, currentUser.id), ne(comments.authorId, currentUser.id), isNull(comments.deletedAt)))
+        .where(and(eq(parentComments.authorId, currentUser.id), ne(comments.authorId, currentUser.id), isNull(comments.hiddenAt), isNull(comments.deletedAt), isNull(parentComments.hiddenAt), isNull(parentComments.deletedAt)))
         .orderBy(desc(comments.createdAt))
         .limit(50),
       db.select({
@@ -53,7 +53,7 @@ export async function GET() {
         .innerJoin(likeAuthors, eq(commentLikes.userId, likeAuthors.id))
         .innerJoin(discussions, eq(likedComments.discussionId, discussions.id))
         .innerJoin(animes, eq(discussions.animeId, animes.id))
-        .where(and(eq(likedComments.authorId, currentUser.id), ne(commentLikes.userId, currentUser.id), isNull(likedComments.deletedAt)))
+        .where(and(eq(likedComments.authorId, currentUser.id), ne(commentLikes.userId, currentUser.id), isNull(likedComments.hiddenAt), isNull(likedComments.deletedAt)))
         .orderBy(desc(commentLikes.createdAt))
         .limit(50),
       db.select({

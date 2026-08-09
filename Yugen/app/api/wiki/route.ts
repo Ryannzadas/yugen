@@ -131,6 +131,7 @@ export async function POST(request: Request) {
   try {
     const context = await currentUser(true);
     if (!context) return Response.json({ error: "Entre na sua conta para sugerir uma edição." }, { status: 401 });
+    if (context.user.suspendedUntil && new Date(context.user.suspendedUntil).getTime() > Date.now()) return Response.json({ error: "Sua participação na comunidade está temporariamente suspensa." }, { status: 403 });
     const payload = await request.json() as { anime?: AnimeSource; changes?: WikiChanges; summary?: string };
     const source = payload.anime;
     const slug = source?.slug?.trim() || "";

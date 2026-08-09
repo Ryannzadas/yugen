@@ -56,7 +56,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ use
         helpfulCount: reviews.helpfulCount,
         createdAt: reviews.createdAt,
       }).from(reviews).innerJoin(animes, eq(reviews.animeId, animes.id))
-        .where(eq(reviews.authorId, profile.id)).orderBy(desc(reviews.createdAt)).limit(10),
+        .where(and(eq(reviews.authorId, profile.id), isNull(reviews.hiddenAt), isNull(reviews.deletedAt))).orderBy(desc(reviews.createdAt)).limit(10),
       db.select({
         id: comments.id,
         body: comments.body,
@@ -66,7 +66,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ use
         animeTitle: animes.title,
         episodeNumber: discussions.episodeNumber,
       }).from(comments).innerJoin(discussions, eq(comments.discussionId, discussions.id)).innerJoin(animes, eq(discussions.animeId, animes.id))
-        .where(and(eq(comments.authorId, profile.id), isNull(comments.parentId), isNull(comments.deletedAt)))
+        .where(and(eq(comments.authorId, profile.id), isNull(comments.parentId), isNull(comments.hiddenAt), isNull(comments.deletedAt)))
         .orderBy(desc(comments.createdAt)).limit(10),
     ]);
 

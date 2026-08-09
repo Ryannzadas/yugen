@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { animes, moderationReports, reviewHelpfulVotes, reviews, users } from "../../../db/schema";
 import { getSessionIdentity } from "../../session-auth";
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
     const rows = await db.select(reviewSelection).from(reviews)
       .innerJoin(animes, eq(reviews.animeId, animes.id))
       .innerJoin(users, eq(reviews.authorId, users.id))
-      .where(eq(animes.slug, slug))
+      .where(and(eq(animes.slug, slug), isNull(reviews.hiddenAt), isNull(reviews.deletedAt)))
       .orderBy(desc(reviews.helpfulCount), desc(reviews.createdAt))
       .limit(100);
 
@@ -90,6 +90,9 @@ export async function POST(request: Request) {
     if (!Number.isFinite(score) || score < 1 || score > 10) return Response.json({ error: "Escolha uma nota de 1 a 10." }, { status: 400 });
 
     const { db, user } = context;
+    if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) {
+      return Response.json({ error: `Sua participação na comunidade está suspensa até ${new Date(user.suspendedUntil).toLocaleString("pt-BR")}. Motivo: ${user.suspensionReason || "decisão da moderação"}.` }, { status: 403 });
+    }
     await db.insert(animes).values({
       id: crypto.randomUUID(),
       slug,
@@ -129,7 +132,7 @@ export async function POST(request: Request) {
     }).returning();
 
     const [rating] = await db.select({ average: sql<number>`COALESCE(AVG(${reviews.score}), 0)::float`, count: sql<number>`COUNT(*)::int` })
-      .from(reviews).where(eq(reviews.animeId, anime.id));
+      .from(reviews).where(and(eq(reviews.animeId, anime.id), isNull(reviews.hiddenAt), isNull(reviews.deletedAt)));
     await db.update(animes).set({ averageRating: rating.average, ratingCount: rating.count, updatedAt: sql`CURRENT_TIMESTAMP` }).where(eq(animes.id, anime.id));
 
     return Response.json({ review: { ...saved, author: user.username, authorDisplayName: user.displayName, authorAvatar: user.avatarUrl, helpfulByViewer: false } }, { status: 201 });
@@ -150,6 +153,7 @@ export async function PATCH(request: Request) {
     if (!review) return Response.json({ error: "Avaliação não encontrada." }, { status: 404 });
 
     if (payload.action === "helpful") {
+      if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) return Response.json({ error: "Sua participação na comunidade está temporariamente suspensa." }, { status: 403 });
       if (review.authorId === user.id) return Response.json({ error: "Você não pode votar na própria avaliação." }, { status: 400 });
       const [existing] = await db.select().from(reviewHelpfulVotes).where(and(eq(reviewHelpfulVotes.reviewId, reviewId), eq(reviewHelpfulVotes.userId, user.id))).limit(1);
       if (existing) {
@@ -163,6 +167,9 @@ export async function PATCH(request: Request) {
     }
 
     if (payload.action === "report") {
+      const [existingReport] = await db.select({ id: moderationReports.id }).from(moderationReports)
+        .where(and(eq(moderationReports.reporterId, user.id), eq(moderationReports.reviewId, reviewId), inArray(moderationReports.status, ["open", "reviewing"]))).limit(1);
+      if (existingReport) return Response.json({ reported: true, existing: true });
       await db.insert(moderationReports).values({
         id: crypto.randomUUID(),
         reporterId: user.id,

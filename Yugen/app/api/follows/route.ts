@@ -15,6 +15,7 @@ export async function POST(request: Request) {
     const [current] = await db.select().from(users).where(eq(users.email, identity.email.toLowerCase())).limit(1);
     const [target] = await db.select().from(users).where(eq(users.username, username)).limit(1);
     if (!current) return Response.json({ error: "Perfil da conta não encontrado." }, { status: 404 });
+    if (current.suspendedUntil && new Date(current.suspendedUntil).getTime() > Date.now()) return Response.json({ error: "Sua participação na comunidade está temporariamente suspensa." }, { status: 403 });
     if (!target) return Response.json({ error: "Usuário não encontrado." }, { status: 404 });
     if (current.id === target.id) return Response.json({ error: "Você não pode seguir o próprio perfil." }, { status: 400 });
     const condition = and(eq(follows.followerId, current.id), eq(follows.followingId, target.id));

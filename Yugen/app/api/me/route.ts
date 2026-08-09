@@ -19,12 +19,15 @@ export async function GET() {
       bannerUrl: users.bannerUrl,
       bio: users.bio,
       role: users.role,
+      suspendedUntil: users.suspendedUntil,
+      suspensionReason: users.suspensionReason,
     }).from(users).where(eq(users.email, identity.email.toLowerCase())).limit(1);
 
     return Response.json({
       user: profile ? {
         ...profile,
         displayName: profile.displayName || profile.username,
+        suspended: Boolean(profile.suspendedUntil && new Date(profile.suspendedUntil).getTime() > Date.now()),
       } : {
         displayName: identity.displayName,
         email: identity.email,
@@ -33,6 +36,9 @@ export async function GET() {
         bannerUrl: null,
         bio: "",
         role: "member",
+        suspendedUntil: null,
+        suspensionReason: null,
+        suspended: false,
       },
     });
   } catch {
@@ -45,6 +51,9 @@ export async function GET() {
         bannerUrl: null,
         bio: "",
         role: "member",
+        suspendedUntil: null,
+        suspensionReason: null,
+        suspended: false,
       },
     });
   }

@@ -35,6 +35,8 @@ const commentSelection = {
   animeTitle: animes.title,
   animePoster: animes.posterUrl,
   discussionKind: discussions.kind,
+  discussionId: discussions.id,
+  discussionLocked: discussions.locked,
   episodeNumber: discussions.episodeNumber,
 };
 
@@ -69,14 +71,24 @@ export async function GET(request: Request) {
           eq(animes.slug, slug),
           episodeNumber === null ? eq(discussions.kind, "general") : eq(discussions.kind, "episode"),
           episodeNumber === null ? isNull(discussions.episodeNumber) : eq(discussions.episodeNumber, episodeNumber),
+          isNull(comments.hiddenAt),
           isNull(comments.deletedAt),
         )).orderBy(asc(comments.createdAt)).limit(200)
       : await base.where(and(
           isNull(comments.deletedAt),
+          isNull(comments.hiddenAt),
           followingOnly ? inArray(comments.authorId, followedUserIds) : undefined,
         )).orderBy(desc(comments.createdAt)).limit(100);
 
-    return Response.json({ comments: rows });
+    let locked = false;
+    if (slug) {
+      const [threadState] = await db.select({ locked: discussions.locked }).from(discussions)
+        .innerJoin(animes, eq(discussions.animeId, animes.id))
+        .where(and(eq(animes.slug, slug), episodeNumber === null ? eq(discussions.kind, "general") : eq(discussions.kind, "episode"), episodeNumber === null ? isNull(discussions.episodeNumber) : eq(discussions.episodeNumber, episodeNumber)))
+        .limit(1);
+      locked = Boolean(threadState?.locked);
+    }
+    return Response.json({ comments: rows, locked });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Não foi possível carregar as discussões." }, { status: 500 });
   }
@@ -96,6 +108,9 @@ export async function POST(request: Request) {
     if (payload.episodeNumber != null && !Number.isFinite(episodeNumber)) return Response.json({ error: "Episódio inválido." }, { status: 400 });
 
     const { db, user } = context;
+    if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) {
+      return Response.json({ error: `Sua participação na comunidade está suspensa até ${new Date(user.suspendedUntil).toLocaleString("pt-BR")}. Motivo: ${user.suspensionReason || "decisão da moderação"}.` }, { status: 403 });
+    }
     const animeTitle = payload.animeTitle?.trim() || readableSlug(animeSlug);
     await db.insert(animes).values({
       id: crypto.randomUUID(),
@@ -126,6 +141,7 @@ export async function POST(request: Request) {
       }).returning();
       thread = created;
     }
+    if (thread.locked) return Response.json({ error: "Esta discussão foi bloqueada pela administração e não aceita novas respostas." }, { status: 423 });
 
     if (payload.parentId) {
       const [parent] = await db.select({ id: comments.id, discussionId: comments.discussionId }).from(comments).where(eq(comments.id, payload.parentId)).limit(1);
@@ -164,6 +180,7 @@ export async function PATCH(request: Request) {
     const { db, user } = context;
 
     if (payload.action === "like") {
+      if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) return Response.json({ error: "Sua participação na comunidade está temporariamente suspensa." }, { status: 403 });
       const [existing] = await db.select().from(commentLikes).where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, user.id))).limit(1);
       if (existing) {
         await db.delete(commentLikes).where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, user.id)));
@@ -176,6 +193,9 @@ export async function PATCH(request: Request) {
     }
 
     if (payload.action === "report") {
+      const [existingReport] = await db.select({ id: moderationReports.id }).from(moderationReports)
+        .where(and(eq(moderationReports.reporterId, user.id), eq(moderationReports.commentId, commentId), inArray(moderationReports.status, ["open", "reviewing"]))).limit(1);
+      if (existingReport) return Response.json({ reported: true, existing: true });
       await db.insert(moderationReports).values({
         id: crypto.randomUUID(),
         reporterId: user.id,
