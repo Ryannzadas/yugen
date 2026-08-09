@@ -14,7 +14,7 @@ const providers: Record<Provider, { baseUrl: string; label: string }> = {
 function cacheLifetime(provider: Provider, path: string) {
   if (/\/(full|characters|staff)$/.test(path) || /^characters\//.test(path)) return 24 * 60 * 60;
   if (provider === "shikimori" && /^animes\/\d+$/.test(path)) return 24 * 60 * 60;
-  if (/^(top\/anime|seasons\/now|animes)/.test(path)) return 15 * 60;
+  if (/^(top\/anime|seasons\/now|anime$|animes)/.test(path)) return 15 * 60;
   return 30 * 60;
 }
 

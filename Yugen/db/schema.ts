@@ -288,7 +288,7 @@ export const animeRevisions = pgTable("anime_revisions", {
 
 export const apiCache = pgTable("api_cache", {
   key: text("key").primaryKey(),
-  provider: text("provider", { enum: ["jikan", "shikimori"] }).notNull(),
+  provider: text("provider", { enum: ["jikan", "shikimori", "kitsu"] }).notNull(),
   payload: text("payload").notNull(),
   statusCode: integer("status_code").notNull().default(200),
   expiresAt: timestamp("expires_at", { withTimezone: true, mode: "string" }).notNull(),

@@ -45,6 +45,15 @@ type JikanStaff = {
   person: { mal_id: number; name: string; images?: { jpg?: JikanImage } };
 };
 
+type JikanPage<T> = {
+  data?: T[];
+  pagination?: {
+    has_next_page?: boolean;
+    last_visible_page?: number;
+    items?: { total?: number };
+  };
+};
+
 type ShikimoriImage = { original?: string; preview?: string; x96?: string; x48?: string };
 type ShikimoriNamed = { id: number; name: string; image?: string | null };
 type ShikimoriAnime = {
@@ -286,19 +295,57 @@ function sortSearchResults(anime: Anime[], normalizedQuery: string) {
   });
 }
 
+async function replaceFallbackCovers(items: Anime[], signal?: AbortSignal) {
+  if (!items.length) return items;
+  try {
+    const response = await fetch("/api/anime-covers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items: items.map((anime) => ({ id: anime.malId, title: anime.title, year: anime.year })) }),
+      signal,
+    });
+    if (!response.ok) throw new Error("Não foi possível corrigir as capas.");
+    const data = await response.json() as { covers?: Record<string, string[]> };
+    return items.map((anime) => {
+      const covers = anime.malId ? data.covers?.[String(anime.malId)] : undefined;
+      return covers?.length
+        ? { ...anime, image: covers[0], imageSources: covers, backdrop: covers[0] }
+        : { ...anime, image: undefined, imageSources: [], backdrop: undefined };
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    return items.map((anime) => ({ ...anime, image: undefined, imageSources: [], backdrop: undefined }));
+  }
+}
+
 export async function fetchAnimePage(query: string, page = 1, limit = 25, signal?: AbortSignal): Promise<AnimePageResult> {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const safePage = Math.max(1, Math.floor(page));
   const safeLimit = Math.max(1, Math.min(25, Math.floor(limit)));
-  const params = new URLSearchParams({ order: "popularity", page: String(safePage), limit: String(safeLimit), censored: "true" });
-  if (normalizedQuery) params.set("search", query.trim());
-  const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${params.toString()}`, signal);
-  return {
-    items: sortSearchResults(response.map(mapShikimoriAnime), normalizedQuery),
-    page: safePage,
-    hasNextPage: response.length === safeLimit,
-    total: null,
-  };
+  const jikanParams = new URLSearchParams({ order_by: "popularity", sort: "asc", page: String(safePage), limit: String(safeLimit), sfw: "true" });
+  if (normalizedQuery) jikanParams.set("q", query.trim());
+  try {
+    const response = await requestJikan<JikanPage<JikanAnime>>(`/anime?${jikanParams.toString()}`, signal);
+    const items = response.data ?? [];
+    return {
+      items: sortSearchResults(items.map(mapAnime), normalizedQuery),
+      page: safePage,
+      hasNextPage: response.pagination?.has_next_page ?? items.length === safeLimit,
+      total: response.pagination?.items?.total ?? null,
+    };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    const fallbackParams = new URLSearchParams({ order: "popularity", page: String(safePage), limit: String(safeLimit), censored: "true" });
+    if (normalizedQuery) fallbackParams.set("search", query.trim());
+    const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${fallbackParams.toString()}`, signal);
+    const fallbackItems = await replaceFallbackCovers(response.map(mapShikimoriAnime), signal);
+    return {
+      items: sortSearchResults(fallbackItems, normalizedQuery),
+      page: safePage,
+      hasNextPage: response.length === safeLimit,
+      total: null,
+    };
+  }
 }
 
 export async function fetchAnimeList(query: string, limit: number, signal?: AbortSignal) {
@@ -311,22 +358,34 @@ export type AnimeSelection = "popular" | "trending" | "recommended";
 export async function fetchAnimeSelection(selection: AnimeSelection, limit = 18, signal?: AbortSignal) {
   const safeLimit = Math.max(1, Math.min(25, Math.floor(limit)));
   const recommendationPage = 2 + Math.floor(Math.random() * 5);
-  const params = new URLSearchParams({
-    order: "popularity",
-    page: String(selection === "recommended" ? recommendationPage : 1),
-    limit: String(safeLimit),
-    censored: "true",
-  });
-  if (selection === "trending") params.set("status", "ongoing");
-
-  const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${params.toString()}`, signal);
-  const items = response.map(mapShikimoriAnime);
-  if (selection !== "recommended") return items;
-
-  return items
-    .map((anime) => ({ anime, order: Math.random() }))
-    .sort((a, b) => a.order - b.order)
-    .map(({ anime }) => anime);
+  try {
+    const path = selection === "recommended"
+      ? `/anime?${new URLSearchParams({ order_by: "popularity", sort: "asc", page: String(recommendationPage), limit: String(safeLimit), sfw: "true" })}`
+      : `/top/anime?${new URLSearchParams({ filter: selection === "trending" ? "airing" : "bypopularity", limit: String(safeLimit), sfw: "true" })}`;
+    const response = await requestJikan<JikanPage<JikanAnime>>(path, signal);
+    const items = (response.data ?? []).map(mapAnime);
+    if (selection !== "recommended") return items;
+    return items
+      .map((anime) => ({ anime, order: Math.random() }))
+      .sort((a, b) => a.order - b.order)
+      .map(({ anime }) => anime);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    const params = new URLSearchParams({
+      order: "popularity",
+      page: String(selection === "recommended" ? recommendationPage : 1),
+      limit: String(safeLimit),
+      censored: "true",
+    });
+    if (selection === "trending") params.set("status", "ongoing");
+    const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${params.toString()}`, signal);
+    const items = await replaceFallbackCovers(response.map(mapShikimoriAnime), signal);
+    if (selection !== "recommended") return items;
+    return items
+      .map((anime) => ({ anime, order: Math.random() }))
+      .sort((a, b) => a.order - b.order)
+      .map(({ anime }) => anime);
+  }
 }
 
 export async function fetchAnimeDetail(id: number, signal?: AbortSignal) {
@@ -387,9 +446,17 @@ export async function fetchAnimeStaff(id: number, signal?: AbortSignal) {
 }
 
 export async function fetchSeasonNow(limit = 25, signal?: AbortSignal) {
-  const params = new URLSearchParams({ status: "ongoing", order: "popularity", page: "1", limit: String(Math.min(50, limit)), censored: "true" });
-  const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${params.toString()}`, signal);
-  return response.map(mapShikimoriAnime);
+  const safeLimit = Math.max(1, Math.min(25, Math.floor(limit)));
+  try {
+    const params = new URLSearchParams({ page: "1", limit: String(safeLimit), sfw: "true" });
+    const response = await requestJikan<JikanPage<JikanAnime>>(`/seasons/now?${params.toString()}`, signal);
+    return (response.data ?? []).map(mapAnime);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    const params = new URLSearchParams({ status: "ongoing", order: "popularity", page: "1", limit: String(safeLimit), censored: "true" });
+    const response = await requestShikimori<ShikimoriAnime[]>(`/animes?${params.toString()}`, signal);
+    return replaceFallbackCovers(response.map(mapShikimoriAnime), signal);
+  }
 }
 
 type JikanCharacterFull = {

@@ -85,6 +85,12 @@ type PublicProfileData = {
   reviews: Array<{ id: string; animeSlug: string; animeTitle: string; title: string; body: string; score: number; spoiler: boolean; helpfulCount: number; createdAt: string }>;
   posts: Array<{ id: string; body: string; createdAt: string; likeCount: number; animeSlug: string; animeTitle: string; episodeNumber?: number | null }>;
 };
+type ProfileSuggestion = {
+  username: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  bio?: string;
+};
 type WikiChanges = Partial<{
   title: string;
   titleJapanese: string;
@@ -671,9 +677,20 @@ function userInitials(user: SessionUser) {
     .toUpperCase() || "YU";
 }
 
+function profileSuggestionInitials(profile: ProfileSuggestion) {
+  return (profile.displayName || profile.username)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "YU";
+}
+
 function SearchBox({ mobileOpen, onMobileOpenChange }: { mobileOpen: boolean; onMobileOpenChange: (open: boolean) => void }) {
   const [value, setValue] = useState("");
   const [suggestions, setSuggestions] = useState<Anime[]>([]);
+  const [profileSuggestions, setProfileSuggestions] = useState<ProfileSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
@@ -690,6 +707,7 @@ function SearchBox({ mobileOpen, onMobileOpenChange }: { mobileOpen: boolean; on
     const search = value.trim();
     if (search.length < 2) {
       setSuggestions([]);
+      setProfileSuggestions([]);
       setLoading(false);
       setError("");
       setActiveIndex(-1);
@@ -700,10 +718,19 @@ function SearchBox({ mobileOpen, onMobileOpenChange }: { mobileOpen: boolean; on
     setLoading(true);
     const timer = window.setTimeout(() => {
       setError("");
-      fetchAnimeList(search, 6, controller.signal)
-        .then((items) => {
-          setSuggestions(items);
+      Promise.allSettled([
+        fetchAnimeList(search, 6, controller.signal),
+        fetch(`/api/users?q=${encodeURIComponent(search)}`, { signal: controller.signal }).then(async (response) => {
+          const data = await response.json() as { profiles?: ProfileSuggestion[]; error?: string };
+          if (!response.ok) throw new Error(data.error || "Não foi possível pesquisar perfis.");
+          return data.profiles || [];
+        }),
+      ])
+        .then(([animeResult, profileResult]) => {
+          setSuggestions(animeResult.status === "fulfilled" ? animeResult.value : []);
+          setProfileSuggestions(profileResult.status === "fulfilled" ? profileResult.value : []);
           setActiveIndex(-1);
+          if (animeResult.status === "rejected" && profileResult.status === "rejected") setError("Não foi possível carregar as sugestões.");
         })
         .catch((reason) => {
           if (reason?.name !== "AbortError") setError("Não foi possível carregar as sugestões.");
@@ -752,11 +779,12 @@ function SearchBox({ mobileOpen, onMobileOpenChange }: { mobileOpen: boolean; on
       input.current?.blur();
       return;
     }
-    if (!suggestions.length) return;
+    const totalSuggestions = suggestions.length + profileSuggestions.length;
+    if (!totalSuggestions) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setOpen(true);
-      setActiveIndex((index) => Math.min(index + 1, suggestions.length - 1));
+      setActiveIndex((index) => Math.min(index + 1, totalSuggestions - 1));
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
@@ -764,7 +792,8 @@ function SearchBox({ mobileOpen, onMobileOpenChange }: { mobileOpen: boolean; on
     }
     if (event.key === "Enter" && activeIndex >= 0) {
       event.preventDefault();
-      window.location.assign(`/anime/${suggestions[activeIndex].slug}`);
+      if (activeIndex < profileSuggestions.length) window.location.assign(`/user/${encodeURIComponent(profileSuggestions[activeIndex].username)}`);
+      else window.location.assign(`/anime/${suggestions[activeIndex - profileSuggestions.length].slug}`);
     }
   }
 
@@ -790,23 +819,42 @@ function SearchBox({ mobileOpen, onMobileOpenChange }: { mobileOpen: boolean; on
         onChange={(event) => { setValue(event.target.value); setOpen(true); }}
         onFocus={() => setOpen(value.trim().length >= 2)}
         onKeyDown={handleKeys}
-        aria-label="Pesquisar anime"
+        aria-label="Pesquisar animes ou perfis"
         aria-autocomplete="list"
-        aria-controls="anime-search-suggestions"
+        aria-controls="global-search-suggestions"
         aria-expanded={showResults}
-        aria-activedescendant={activeIndex >= 0 ? `anime-suggestion-${activeIndex}` : undefined}
+        aria-activedescendant={activeIndex >= 0 ? `search-suggestion-${activeIndex}` : undefined}
         autoComplete="off"
-        placeholder="Pesquise um anime pelo título…"
+        placeholder="Pesquise animes ou perfis…"
       />
-      {value && <button className="search-clear" type="button" onClick={() => { setValue(""); setSuggestions([]); input.current?.focus(); }} aria-label="Limpar pesquisa">×</button>}
+      {value && <button className="search-clear" type="button" onClick={() => { setValue(""); setSuggestions([]); setProfileSuggestions([]); input.current?.focus(); }} aria-label="Limpar pesquisa">×</button>}
       <kbd>⌘ K</kbd>
-      {showResults && <div className="search-results" id="anime-search-suggestions" role="listbox" aria-label="Sugestões de anime">
+      {showResults && <div className="search-results" id="global-search-suggestions" role="listbox" aria-label="Sugestões de anime e perfis">
         <div className="search-results-head"><span>Sugestões para “{value.trim()}”</span><small>Pressione Enter para pesquisar tudo</small></div>
         {loading && <div className="search-state"><i /> Pesquisando na API de animes…</div>}
         {!loading && error && <div className="search-state error">{error}</div>}
-        {!loading && !error && suggestions.map((anime, index) => (
+        {!loading && !error && profileSuggestions.length > 0 && <div className="search-group-label">Perfis</div>}
+        {!loading && !error && profileSuggestions.map((profile, profileIndex) => {
+          const index = profileIndex;
+          return <Link
+            id={`search-suggestion-${index}`}
+            href={`/user/${encodeURIComponent(profile.username)}`}
+            className={`search-suggestion profile-suggestion ${activeIndex === index ? "active" : ""}`}
+            role="option"
+            aria-selected={activeIndex === index}
+            key={profile.username}
+          >
+            <span className="search-profile-avatar" style={profileImageStyle(profile.avatarUrl)}>{!profile.avatarUrl && profileSuggestionInitials(profile)}</span>
+            <span><b>{profile.displayName || profile.username}</b><small>@{profile.username}{profile.bio ? ` · ${profile.bio}` : ""}</small></span>
+            <em>Perfil</em>
+          </Link>;
+        })}
+        {!loading && !error && suggestions.length > 0 && <div className="search-group-label">Animes</div>}
+        {!loading && !error && suggestions.map((anime, animeIndex) => {
+          const index = profileSuggestions.length + animeIndex;
+          return (
           <Link
-            id={`anime-suggestion-${index}`}
+            id={`search-suggestion-${index}`}
             href={`/anime/${anime.slug}`}
             className={`search-suggestion ${activeIndex === index ? "active" : ""}`}
             role="option"
@@ -817,9 +865,10 @@ function SearchBox({ mobileOpen, onMobileOpenChange }: { mobileOpen: boolean; on
             <span><b>{anime.title}</b><small>{anime.year || "A definir"} · {formatPt(anime.format)} · {genrePt(anime.genre)}</small></span>
             <em>★ {anime.rating ? anime.rating.toFixed(2) : "—"}</em>
           </Link>
-        ))}
-        {!loading && !error && !suggestions.length && <div className="search-state">Nenhum anime encontrado para “{value.trim()}”.</div>}
-        {!loading && !error && suggestions.length > 0 && <button className="search-all" type="submit">Ver todos os resultados para “{value.trim()}” <span>↗</span></button>}
+          );
+        })}
+        {!loading && !error && !suggestions.length && !profileSuggestions.length && <div className="search-state">Nenhum anime ou perfil encontrado para “{value.trim()}”.</div>}
+        {!loading && !error && (suggestions.length > 0 || profileSuggestions.length > 0) && <button className="search-all" type="submit">Ver todos os resultados para “{value.trim()}” <span>↗</span></button>}
       </div>}
     </form>
   );
@@ -1205,11 +1254,33 @@ function CatalogView() {
   const [yearTo, setYearTo] = useState("");
   const [sort, setSort] = useState("Relevance");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [profileResults, setProfileResults] = useState<ProfileSuggestion[]>([]);
+  const [profilesLoading, setProfilesLoading] = useState(false);
   const feed = usePaginatedAnimeFeed(query);
 
   useEffect(() => {
     setQuery(new URLSearchParams(window.location.search).get("q") || "");
   }, []);
+
+  useEffect(() => {
+    const search = query?.trim() || "";
+    if (search.length < 2) {
+      setProfileResults([]);
+      setProfilesLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setProfilesLoading(true);
+    fetch(`/api/users?q=${encodeURIComponent(search)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as { profiles?: ProfileSuggestion[] };
+        if (!response.ok) throw new Error("Não foi possível pesquisar perfis.");
+        setProfileResults(data.profiles || []);
+      })
+      .catch((error) => { if (error?.name !== "AbortError") setProfileResults([]); })
+      .finally(() => { if (!controller.signal.aborted) setProfilesLoading(false); });
+    return () => controller.abort();
+  }, [query]);
 
   const availableGenres = useMemo(() => Array.from(new Set(feed.items.flatMap((anime) => anime.genres || [anime.genre]))).sort().slice(0, 14), [feed.items]);
   const availableStudios = useMemo(() => Array.from(new Set(feed.items.flatMap((anime) => anime.studios || [anime.studio]))).filter(Boolean).sort(), [feed.items]);
@@ -1245,6 +1316,10 @@ function CatalogView() {
   return (
     <main className="page-shell catalog-page">
       <header className="page-title"><p className="eyebrow">Dados ao vivo da Jikan / MyAnimeList</p><h1>{query ? <>Resultados para<br /><em>“{query}”</em></> : <>Encontre sua próxima<br /><em>obsessão.</em></>}</h1><p>{query ? <>Mostrando as correspondências mais próximas para <b>“{query}”</b>. Refine o termo no campo de pesquisa acima se necessário.</> : <>Sinopses, trailers, personagens e detalhes de produção atualizados pela base de animes.</>}</p></header>
+      {query && (profilesLoading || profileResults.length > 0) && <section className="catalog-profile-results">
+        <div className="section-heading"><div><p className="eyebrow">Pessoas no Yugen</p><h2>Perfis encontrados</h2></div></div>
+        {profilesLoading ? <div className="profile-result-loading">Pesquisando perfis…</div> : <div className="profile-result-grid">{profileResults.map((profile) => <Link href={`/user/${encodeURIComponent(profile.username)}`} key={profile.username}><span className="profile-result-avatar" style={profileImageStyle(profile.avatarUrl)}>{!profile.avatarUrl && profileSuggestionInitials(profile)}</span><span><b>{profile.displayName || profile.username}</b><small>@{profile.username}</small>{profile.bio && <em>{profile.bio}</em>}</span><strong>Ver perfil ↗</strong></Link>)}</div>}
+      </section>}
       <div className="catalog-toolbar">
         <button className="filter-mobile" onClick={() => setFiltersOpen(!filtersOpen)}>☷ Filtros</button>
         <p>{feed.loading ? "Atualizando catálogo…" : <>Mostrando <b>{results.length}</b>{feed.total ? <> de <b>{feed.total.toLocaleString("pt-BR")}</b> títulos disponíveis</> : <> títulos carregados</>}</>}</p>

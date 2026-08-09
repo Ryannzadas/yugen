@@ -95,6 +95,9 @@ a { color: inherit; text-decoration: none; }
 .search-suggestion b { margin-bottom: 6px; font-size: 11px; }
 .search-suggestion small { color: var(--muted); font-size: 8px; }
 .search-suggestion em { color: var(--muted); font-size: 9px; font-style: normal; }
+.search-group-label { padding: 10px 7px 5px; color: var(--faint); font-size: 8px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+.search-profile-avatar { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid var(--line); border-radius: 50%; background-color: var(--surface-3); color: var(--text); font-size: 10px; font-weight: 800; }
+.profile-suggestion { min-height: 56px; }
 .search-state { display: flex; min-height: 88px; align-items: center; justify-content: center; gap: 9px; padding: 15px; color: var(--muted); text-align: center; font-size: 10px; }
 .search-state i { width: 14px; height: 14px; border: 2px solid var(--line-strong); border-top-color: var(--text); border-radius: 50%; animation: searchSpin .8s linear infinite; }
 .search-state.error { color: var(--text); }
@@ -262,6 +265,18 @@ h1 em, h2 em { color: var(--accent); font-weight: 400; }
 .page-title > p:last-child { margin: 25px 0 0; color: var(--muted); }
 .page-title.split { flex-direction: row; justify-content: space-between; align-items: end; }
 .catalog-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 25px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.catalog-profile-results { padding: 0 0 36px; border-bottom: 1px solid var(--line); }
+.catalog-profile-results .section-heading { margin-bottom: 18px; }
+.profile-result-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.profile-result-grid > a { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 13px; align-items: center; min-height: 82px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); }
+.profile-result-grid > a:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.profile-result-avatar { display: grid; width: 52px; height: 52px; place-items: center; border-radius: 50%; background-color: var(--surface-3); background-position: center; background-size: cover; font-size: 11px; font-weight: 800; }
+.profile-result-grid b, .profile-result-grid small, .profile-result-grid em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-result-grid b { margin-bottom: 4px; font-size: 12px; }
+.profile-result-grid small, .profile-result-grid em { color: var(--muted); font-size: 9px; font-style: normal; }
+.profile-result-grid em { margin-top: 5px; }
+.profile-result-grid strong { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.profile-result-loading { padding: 24px; border: 1px dashed var(--line); color: var(--muted); font-size: 10px; }
 .catalog-toolbar p { margin: 0; }
 .catalog-toolbar label { display: flex; align-items: center; gap: 10px; }
 select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; outline: none; }
@@ -1109,6 +1124,7 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
   .collection-grid { grid-template-columns: 1fr; }
   .collection-posters { height: 280px; }
   .popular-grid { grid-template-columns: repeat(3, 1fr); }
+  .profile-result-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .page-shell { padding-top: 50px; }
   .page-title { padding: 35px 0 55px; }
   .page-title.split { flex-direction: column; align-items: flex-start; gap: 30px; }
@@ -1205,6 +1221,7 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
   .catalog-toolbar { flex-wrap: wrap; gap: 15px; }
   .catalog-toolbar p { order: 3; width: 100%; }
   .catalog-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .profile-result-grid { grid-template-columns: 1fr; }
   .anime-hero { height: 210px; }
   .trailer-controls { right: 14px; bottom: 16px; left: 14px; justify-content: center; overflow-x: auto; }
   .trailer-controls button { min-width: 36px; height: 34px; padding-inline: 9px; }

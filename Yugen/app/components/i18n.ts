@@ -11,8 +11,8 @@ type Dictionary = Record<string, string>;
 const en: Dictionary = {
   "Início": "Home", "Catálogo": "Catalog", "Notícias": "News", "Coleções": "Collections", "Discussões": "Discussions", "Início do Yugen": "Yugen home", "Navegação principal": "Main navigation",
   "Entrar": "Log in", "Criar conta": "Create account", "Ver perfil": "View profile", "Editar perfil": "Edit profile", "Sair": "Log out",
-  "Voltar": "Back", "Pesquisar anime": "Search anime", "Pesquise um anime pelo título…": "Search anime by title…", "Limpar pesquisa": "Clear search",
-  "Sugestões de anime": "Anime suggestions", "Pressione Enter para pesquisar tudo": "Press Enter to search all", "Pesquisando na API de animes…": "Searching the anime API…",
+  "Voltar": "Back", "Pesquisar anime": "Search anime", "Pesquisar animes ou perfis": "Search anime or profiles", "Pesquise um anime pelo título…": "Search anime by title…", "Pesquise animes ou perfis…": "Search anime or profiles…", "Limpar pesquisa": "Clear search",
+  "Sugestões de anime": "Anime suggestions", "Sugestões de anime e perfis": "Anime and profile suggestions", "Animes": "Anime", "Perfis": "Profiles", "Perfis encontrados": "Profiles found", "Pessoas no Yugen": "People on Yugen", "Pesquisando perfis…": "Searching profiles…", "Pressione Enter para pesquisar tudo": "Press Enter to search all", "Pesquisando na API de animes…": "Searching the anime API…",
   "Não foi possível carregar as sugestões.": "Could not load suggestions.", "Abrir pesquisa de anime": "Open anime search", "Abrir ou fechar navegação": "Open or close navigation",
   "Mudar para o modo claro": "Switch to light mode", "Mudar para o modo escuro": "Switch to dark mode", "Abrir menu do perfil": "Open profile menu",
   "Atualizando pela Jikan": "Updating from Jikan", "API de animes indisponível": "Anime API unavailable", "Destaque ao vivo · Jikan / MyAnimeList": "Live spotlight · Jikan / MyAnimeList",
@@ -91,7 +91,7 @@ const en: Dictionary = {
 const es: Dictionary = {
   "Início": "Inicio", "Catálogo": "Catálogo", "Notícias": "Noticias", "Coleções": "Colecciones", "Discussões": "Discusiones", "Início do Yugen": "Inicio de Yugen", "Navegação principal": "Navegación principal",
   "Entrar": "Iniciar sesión", "Criar conta": "Crear cuenta", "Ver perfil": "Ver perfil", "Editar perfil": "Editar perfil", "Sair": "Cerrar sesión", "Voltar": "Volver",
-  "Pesquisar anime": "Buscar anime", "Pesquise um anime pelo título…": "Busca un anime por título…", "Limpar pesquisa": "Limpiar búsqueda", "Sugestões de anime": "Sugerencias de anime",
+  "Pesquisar anime": "Buscar anime", "Pesquisar animes ou perfis": "Buscar anime o perfiles", "Pesquise um anime pelo título…": "Busca un anime por título…", "Pesquise animes ou perfis…": "Busca anime o perfiles…", "Limpar pesquisa": "Limpiar búsqueda", "Sugestões de anime": "Sugerencias de anime", "Sugestões de anime e perfis": "Sugerencias de anime y perfiles", "Perfis": "Perfiles", "Perfis encontrados": "Perfiles encontrados", "Pessoas no Yugen": "Personas en Yugen", "Pesquisando perfis…": "Buscando perfiles…",
   "Pressione Enter para pesquisar tudo": "Pulsa Enter para buscar todo", "Pesquisando na API de animes…": "Buscando en la API de anime…", "Não foi possível carregar as sugestões.": "No se pudieron cargar las sugerencias.",
   "Abrir pesquisa de anime": "Abrir búsqueda de anime", "Abrir ou fechar navegação": "Abrir o cerrar navegación", "Mudar para o modo claro": "Cambiar al modo claro", "Mudar para o modo escuro": "Cambiar al modo oscuro",
   "Abrir menu do perfil": "Abrir menú del perfil", "Atualizando pela Jikan": "Actualizando desde Jikan", "API de animes indisponível": "API de anime no disponible", "Destaque ao vivo · Jikan / MyAnimeList": "Destacado en vivo · Jikan / MyAnimeList",
