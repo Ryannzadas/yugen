@@ -116,7 +116,7 @@ export async function POST(request: Request) {
       id: crypto.randomUUID(),
       slug: animeSlug,
       title: animeTitle,
-      synopsis: "Dados sincronizados da Jikan.",
+      synopsis: "Sinopse não disponível.",
       posterUrl: payload.animePoster || null,
     }).onConflictDoUpdate({
       target: animes.slug,

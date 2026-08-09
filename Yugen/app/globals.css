@@ -190,8 +190,11 @@ h1 em, h2 em { color: var(--accent); font-weight: 400; }
 .hero-index i { width: 1px; height: 90px; background: linear-gradient(var(--accent) 0 20%, rgba(255,255,255,.2) 20%); }
 .hero-index button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 50%; background: rgba(8,8,10,.28); color: #ddd8d2; font-size: 13px; backdrop-filter: blur(8px); }
 .hero-index button:hover, .hero-index button:focus-visible { border-color: rgba(255,255,255,.35); background: rgba(8,8,10,.68); }
-.scroll-cue { position: absolute; z-index: 2; left: clamp(24px, 8vw, 120px); bottom: 22px; display: flex; gap: 18px; align-items: center; color: #777680; font-size: 9px; letter-spacing: .2em; }
-.scroll-cue span { color: var(--accent); font-size: 15px; }
+.scroll-cue { position: absolute; z-index: 2; left: 50%; bottom: 18px; display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 5px 6px 5px 14px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; background: rgba(8,8,11,.46); color: #d5d1cc; font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; backdrop-filter: blur(12px); transform: translateX(-50%); transition: border-color .2s ease, background .2s ease, transform .2s ease; }
+.scroll-cue span { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 50%; background: var(--cream); color: #0b0b0d; font-size: 13px; animation: scrollCueArrow 1.8s ease-in-out infinite; }
+.scroll-cue:hover, .scroll-cue:focus-visible { border-color: rgba(255,255,255,.42); background: rgba(8,8,11,.74); transform: translateX(-50%) translateY(-2px); }
+@keyframes scrollCueArrow { 0%, 100% { transform: translateY(-1px); } 50% { transform: translateY(2px); } }
+@media (prefers-reduced-motion: reduce) { .scroll-cue span { animation: none; } }
 
 .content-shell, .page-shell { width: min(100% - 48px, 1380px); margin: 0 auto; }
 .content-shell { padding-bottom: 70px; }
@@ -1118,7 +1121,7 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
   .hero h1 { font-size: clamp(50px, 11vw, 76px); }
   .hero-index { display: none; }
   .hero-meta { flex-wrap: wrap; gap: 12px; }
-  .scroll-cue { left: auto; right: 24px; }
+  .scroll-cue { left: 50%; right: auto; bottom: 14px; }
   .editorial-intro { grid-template-columns: 1fr; padding: 80px 0 65px; }
   .continue-grid { grid-template-columns: repeat(2, 1fr); }
   .collection-grid { grid-template-columns: 1fr; }

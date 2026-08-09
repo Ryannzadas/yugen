@@ -114,7 +114,7 @@ export async function POST(request: Request) {
       const title = source?.title?.trim() || "";
       if (!slug || !title) return Response.json({ error: "Anime inválido." }, { status: 400 });
       await db.insert(animes).values({
-        id: crypto.randomUUID(), slug, title, synopsis: "Dados sincronizados da Jikan.", posterUrl: source?.image || null,
+        id: crypto.randomUUID(), slug, title, synopsis: "Sinopse não disponível.", posterUrl: source?.image || null,
         episodeCount: source?.episodes ?? null, seasonYear: source?.year ?? null, format: source?.format || "TV", season: source?.season || null,
         airingStatus: source?.status || "unknown", broadcastDay: source?.broadcastDay || null, broadcastTime: source?.broadcastTime || null,
       }).onConflictDoUpdate({ target: animes.slug, set: { title, posterUrl: source?.image || undefined, broadcastDay: source?.broadcastDay || undefined, broadcastTime: source?.broadcastTime || undefined, updatedAt: sql`CURRENT_TIMESTAMP` } });

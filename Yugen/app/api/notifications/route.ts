@@ -140,7 +140,7 @@ export async function GET() {
         actor: "Yugen Calendário",
         actorAvatar: null,
         title: `Novo episódio de ${row.animeTitle} é exibido hoje`,
-        description: row.broadcastTime ? `Horário informado pela Jikan: ${row.broadcastTime}.` : "O horário ainda não foi informado pela Jikan.",
+        description: row.broadcastTime ? `Horário previsto: ${row.broadcastTime}.` : "Horário ainda não confirmado.",
         createdAt: new Date().toISOString(),
         animeSlug: row.animeSlug,
         animeTitle: row.animeTitle,

@@ -148,7 +148,7 @@ export async function POST(request: Request) {
       slug,
       title,
       nativeTitle: source?.titleJapanese || null,
-      synopsis: source?.synopsis || "Dados sincronizados da Jikan.",
+      synopsis: source?.synopsis || "Sinopse não disponível.",
       format: source?.format || "TV",
       episodeCount: source?.episodes ?? null,
       season: source?.season || null,

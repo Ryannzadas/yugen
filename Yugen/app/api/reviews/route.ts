@@ -97,7 +97,7 @@ export async function POST(request: Request) {
       id: crypto.randomUUID(),
       slug,
       title: animeTitle,
-      synopsis: "Dados sincronizados da Jikan.",
+      synopsis: "Sinopse não disponível.",
       format: source?.format || "TV",
       episodeCount: source?.episodes ?? null,
       season: source?.season || null,

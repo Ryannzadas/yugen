@@ -124,12 +124,12 @@ export async function GET(
     const staleUntil = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
     await writeCache({ key, provider, payload: upstream.body, statusCode: upstream.status, expiresAt, staleUntil });
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders("MISS", maxAge) });
-  } catch (error) {
+  } catch {
     if (cached && new Date(cached.staleUntil) > now) {
       return new Response(cached.payload, { status: cached.statusCode, headers: responseHeaders("STALE", 60) });
     }
     return Response.json(
-      { error: error instanceof Error ? error.message : "A API de animes está indisponível." },
+      { error: "Conteúdo temporariamente indisponível. Tente novamente em alguns instantes." },
       { status: 502, headers: { "cache-control": "no-store", "x-yugen-cache": "ERROR" } },
     );
   }

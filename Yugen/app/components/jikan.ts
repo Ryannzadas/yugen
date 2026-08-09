@@ -102,27 +102,23 @@ export type AnimePageResult = {
 };
 
 async function requestJikan<T>(path: string, signal?: AbortSignal): Promise<T> {
-  let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const response = await fetch(`${JIKAN_BASE}${path}`, { headers: { accept: "application/json" }, signal });
     if (response.ok) return response.json();
-    lastStatus = response.status;
     if (response.status < 500 && response.status !== 429) break;
     await new Promise((resolve) => setTimeout(resolve, 700));
   }
-  throw new Error(lastStatus ? `A API Jikan está indisponível (${lastStatus}).` : "A API Jikan está indisponível.");
+  throw new Error("Não foi possível carregar o conteúdo no momento.");
 }
 
 async function requestShikimori<T>(path: string, signal?: AbortSignal): Promise<T> {
-  let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const response = await fetch(`${SHIKIMORI_API_BASE}${path}`, { headers: { accept: "application/json" }, signal });
     if (response.ok) return response.json();
-    lastStatus = response.status;
     if (response.status < 500 && response.status !== 429) break;
     await new Promise((resolve) => setTimeout(resolve, 600));
   }
-  throw new Error(lastStatus ? `As APIs de anime estão indisponíveis (${lastStatus}).` : "As APIs de anime estão indisponíveis.");
+  throw new Error("Não foi possível carregar o conteúdo no momento.");
 }
 
 function absoluteShikimoriImage(path?: string) {
@@ -213,7 +209,7 @@ function mapShikimoriAnime(anime: ShikimoriAnime, index = 0): Anime {
     episodes: anime.episodes ?? null,
     duration: anime.duration ? `${anime.duration} min per ep` : "Unknown",
     aired: [anime.aired_on, anime.released_on].filter(Boolean).join(" to ") || "Unknown",
-    source: "MyAnimeList",
+    source: "Unknown",
     atlas: 1,
     frame: index % 8,
     image,

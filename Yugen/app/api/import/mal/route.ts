@@ -35,16 +35,14 @@ function mappedStatus(value?: string): "watching" | "to_watch" | "watched" {
 }
 
 async function jikanPage(username: string, page: number) {
-  let lastStatus = 0;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const response = await fetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?page=${page}`, { headers: { accept: "application/json" }, cache: "no-store" });
     if (response.ok) return response.json() as Promise<JikanPage>;
-    lastStatus = response.status;
     if (response.status === 404) throw new Error("Usuário do MyAnimeList não encontrado ou lista privada.");
     if (response.status !== 429 && response.status < 500) break;
     await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
   }
-  throw new Error(`A importação foi interrompida pela API Jikan (${lastStatus || "indisponível"}). Tente novamente em alguns minutos.`);
+  throw new Error("Não foi possível concluir a importação agora. Tente novamente em alguns minutos.");
 }
 
 export async function POST(request: Request) {
@@ -88,7 +86,7 @@ export async function POST(request: Request) {
         studioId = studio?.id || null;
       }
       await db.insert(animes).values({
-        id: crypto.randomUUID(), slug, title, synopsis: "Importado do MyAnimeList via Jikan.", format: entry?.type || "TV", episodeCount: entry?.episodes ?? null,
+        id: crypto.randomUUID(), slug, title, synopsis: "Importado do MyAnimeList.", format: entry?.type || "TV", episodeCount: entry?.episodes ?? null,
         season: entry?.season || null, seasonYear: entry?.year ?? null, airingStatus: entry?.status || "unknown",
         posterUrl: entry?.images?.jpg?.large_image_url || entry?.images?.jpg?.image_url || null, studioId,
       }).onConflictDoUpdate({ target: animes.slug, set: {

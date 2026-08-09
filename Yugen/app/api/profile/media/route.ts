@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Não foi possível enviar a imagem.";
     if (/BLOB_READ_WRITE_TOKEN|No token found/i.test(message)) {
-      return Response.json({ error: "O armazenamento de imagens ainda não foi conectado ao projeto no Vercel." }, { status: 503 });
+      return Response.json({ error: "O envio de imagens está temporariamente indisponível. Tente novamente mais tarde." }, { status: 503 });
     }
     return Response.json({ error: message }, { status: 500 });
   }
