@@ -6,7 +6,7 @@ import { newsItems, type Anime, type CharacterDetail } from "./data";
 import { fetchAnimeCharacters, fetchAnimeDetail, fetchAnimeList, fetchAnimePage, fetchAnimeSelection, fetchAnimeStaff, fetchCharacterDetail, fetchSeasonNow, type AnimeSelection } from "./jikan";
 import { languageOptions, observeDocumentLanguage, type Language } from "./i18n";
 
-type View = "home" | "catalog" | "anime" | "calendar" | "character" | "collections" | "discussions" | "news" | "article" | "profile" | "public-profile" | "settings" | "moderation" | "blueprint";
+type View = "home" | "catalog" | "anime" | "calendar" | "character" | "collections" | "discussions" | "news" | "article" | "profile" | "public-profile" | "settings" | "library" | "moderation" | "blueprint";
 type Modal = "join" | "login" | "forgot" | "collection" | "create" | null;
 type SessionUser = {
   displayName: string;
@@ -26,7 +26,12 @@ type LibraryEntry = {
   episodes?: number | null;
   year?: number | null;
   format?: string;
+  season?: string | null;
+  airingStatus?: string;
   genres?: string[];
+  studio?: string | null;
+  broadcastDay?: string | null;
+  broadcastTime?: string | null;
   status: LibraryStatus;
   progressEpisodes: number;
   score?: number | null;
@@ -103,6 +108,19 @@ type WikiRevision = {
   animeSlug?: string;
   animeTitle?: string;
   animePoster?: string | null;
+};
+type AdvancedLibraryData = {
+  preferences: { weeklyEpisodeGoal: number; remindersEnabled: boolean; malUsername?: string | null; lastImportedAt?: string | null };
+  weeklyEpisodes: number;
+  history: Array<{ id: string; slug: string; title: string; image?: string | null; previousProgress: number; newProgress: number; source: "manual" | "mal_import"; createdAt: string }>;
+  stats: {
+    genres: Array<{ name: string; count: number }>;
+    studios: Array<{ name: string; count: number }>;
+    scores: Array<{ score: number | null; count: number }>;
+    statuses: Array<{ status: LibraryStatus; count: number }>;
+  };
+  reminders: Array<{ slug: string; title: string; image?: string | null; broadcastDay?: string | null; broadcastTime?: string | null; enabled: boolean }>;
+  imports: Array<{ id: string; externalUsername: string; importedCount: number; status: "running" | "completed" | "failed"; errorMessage?: string | null; completedAt?: string | null; createdAt: string }>;
 };
 
 function Link({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
@@ -355,6 +373,9 @@ function libraryPayload(anime: Anime) {
     season: anime.season,
     status: anime.status,
     genres: anime.genres || [anime.genre].filter(Boolean),
+    studio: anime.studios?.[0] || anime.studio,
+    broadcastDay: anime.broadcastDay,
+    broadcastTime: anime.broadcastTime,
   };
 }
 
@@ -366,9 +387,15 @@ function animeFromLibrary(entry: LibraryEntry): Anime {
     image: entry.image || undefined,
     year: entry.year || 0,
     format: entry.format || "TV",
+    season: entry.season || "Unknown",
+    status: entry.airingStatus || "Unknown",
     episodes: entry.episodes,
     genre: entry.genres?.[0] || "Anime",
     genres: entry.genres || [],
+    studio: entry.studio || "Não informado",
+    studios: entry.studio ? [entry.studio] : [],
+    broadcastDay: entry.broadcastDay || undefined,
+    broadcastTime: entry.broadcastTime || undefined,
     rating: entry.score || 0,
   };
 }
@@ -813,6 +840,7 @@ function Header({ theme, onTheme, onAuth, user, language, onLanguage }: { theme:
           {profileOpen && <div className="profile-menu" role="menu">
             <div className="profile-menu-header"><span className={`mini-avatar ${user.avatarUrl ? "has-image" : ""}`} style={profileImageStyle(user.avatarUrl)}>{!user.avatarUrl && userInitials(user)}</span><div><b>{userLabel(user)}</b><small>{user.email}</small></div></div>
             <Link href="/profile" role="menuitem" onClick={() => setProfileOpen(false)}><span>◎</span> Ver perfil</Link>
+            <Link href="/library" role="menuitem" onClick={() => setProfileOpen(false)}><span>▤</span> Biblioteca avançada</Link>
             <Link href="/calendar" role="menuitem" onClick={() => setProfileOpen(false)}><span>◷</span> Calendário</Link>
             {(user.role === "admin" || user.role === "moderator") && <Link href="/moderation" role="menuitem" onClick={() => setProfileOpen(false)}><span>◇</span> Moderação da Wiki</Link>}
             <Link href="/settings" role="menuitem" onClick={() => setProfileOpen(false)}><span>✎</span> Editar perfil</Link>
@@ -1022,7 +1050,44 @@ function Carousel({ title, subtitle, items }: { title: string; subtitle: string;
 
 const broadcastDays: Array<[string, string]> = [["Mondays", "Segunda"], ["Tuesdays", "Terça"], ["Wednesdays", "Quarta"], ["Thursdays", "Quinta"], ["Fridays", "Sexta"], ["Saturdays", "Sábado"], ["Sundays", "Domingo"]];
 
-function CalendarView({ user, library, saveLibrary, openAuth }: { user: SessionUser | null | undefined; library: LibraryEntry[]; saveLibrary: SaveLibrary; openAuth: (modal: Modal) => void }) {
+function ReminderButton({ anime, user, openAuth, compact = false }: { anime: Anime; user: SessionUser | null | undefined; openAuth: () => void; compact?: boolean }) {
+  const [active, setActive] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!user || !anime.slug) return;
+    const controller = new AbortController();
+    fetch(`/api/library/advanced?anime=${encodeURIComponent(anime.slug)}`, { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => setActive(Boolean(data?.reminderEnabled)))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [anime.slug, user]);
+
+  async function toggle() {
+    if (!user) return openAuth();
+    setBusy(true);
+    try {
+      const response = await fetch("/api/library/advanced", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "reminder", enabled: !active, anime: libraryPayload(anime) }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não foi possível atualizar o lembrete.");
+      setActive(Boolean(data.reminderEnabled));
+      window.dispatchEvent(new Event("yugen:advanced-library"));
+    } catch {
+      // Keep the current state when the server is temporarily unavailable.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <button type="button" className={`ghost-button reminder-button ${active ? "selected" : ""} ${compact ? "compact" : ""}`} onClick={toggle} disabled={busy}>{busy ? "Salvando…" : active ? "✓ Lembrete ativo" : "＋ Lembrar episódios"}</button>;
+}
+
+function CalendarView({ user, openAuth }: { user: SessionUser | null | undefined; openAuth: (modal: Modal) => void }) {
   const [items, setItems] = useState<Anime[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1039,18 +1104,11 @@ function CalendarView({ user, library, saveLibrary, openAuth }: { user: SessionU
 
   const scheduled = items.filter((anime) => anime.broadcastDay === selectedDay);
   const visible = scheduled.length ? scheduled : items.slice(0, 8);
-  async function remind(anime: Anime) {
-    if (!user) return openAuth("login");
-    await saveLibrary(anime, { status: "watching" });
-  }
 
   return <main className="page-shell calendar-page">
     <header className="page-title split"><div><p className="eyebrow">Lançamentos da temporada atual</p><h1>Sua semana<br /><em>em episódios.</em></h1><p>Acompanhe os animes em exibição e guarde os próximos episódios na sua biblioteca.</p></div><div className="calendar-summary"><b>{items.length}</b><span>animes em exibição</span></div></header>
     <nav className="day-switcher" aria-label="Dias da semana">{broadcastDays.map(([value, label]) => <button className={selectedDay === value ? "active" : ""} onClick={() => setSelectedDay(value)} key={value}><span>{label.slice(0, 3)}</span><b>{label}</b></button>)}</nav>
-    {loading ? <LoadingCards count={8} grid /> : error ? <ApiError message={error} retry={() => window.location.reload()} /> : <section className="schedule-list"><div className="schedule-head"><p className="eyebrow">{broadcastDays.find(([value]) => value === selectedDay)?.[1]}</p><h2>{scheduled.length ? `${scheduled.length} lançamentos` : "Destaques da temporada"}</h2></div>{visible.map((anime, index) => {
-      const entry = library.find((item) => item.slug === anime.slug);
-      return <article className="schedule-item" key={anime.slug}><time>{anime.broadcastTime || `${String(18 + (index % 5)).padStart(2, "0")}:00`}</time><Poster anime={anime} /><div><span>{formatPt(anime.format)} · {statusPt(anime.status)}</span><h3><Link href={`/anime/${anime.slug}`}>{anime.title}</Link></h3><p>{anime.episodes ? `${anime.episodes} episódios` : "Episódios em atualização"} · {anime.studio}</p></div><button className={entry ? "ghost-button selected" : "ghost-button"} onClick={() => remind(anime)}>{entry ? "✓ Na biblioteca" : "＋ Lembrar-me"}</button></article>;
-    })}</section>}
+    {loading ? <LoadingCards count={8} grid /> : error ? <ApiError message={error} retry={() => window.location.reload()} /> : <section className="schedule-list"><div className="schedule-head"><p className="eyebrow">{broadcastDays.find(([value]) => value === selectedDay)?.[1]}</p><h2>{scheduled.length ? `${scheduled.length} lançamentos` : "Destaques da temporada"}</h2></div>{visible.map((anime, index) => <article className="schedule-item" key={anime.slug}><time>{anime.broadcastTime || `${String(18 + (index % 5)).padStart(2, "0")}:00`}</time><Poster anime={anime} /><div><span>{formatPt(anime.format)} · {statusPt(anime.status)}</span><h3><Link href={`/anime/${anime.slug}`}>{anime.title}</Link></h3><p>{anime.episodes ? `${anime.episodes} episódios` : "Episódios em atualização"} · {anime.studio}</p></div><ReminderButton anime={anime} user={user} openAuth={() => openAuth("login")} compact /></article>)}</section>}
   </main>;
 }
 
@@ -1481,7 +1539,7 @@ function AnimeView({ slug, openModal, openCollection, language, user, library, s
             {libraryMessage && <small>{libraryMessage}</small>}
           </div>
         </div>
-        <div className="anime-side-actions"><button className={`favorite-button ${libraryEntry?.favorite ? "selected" : ""}`} onClick={() => updateLibrary({ favorite: !libraryEntry?.favorite })}>{libraryEntry?.favorite ? "♥ Favorito" : "♡ Favoritar"}</button><button className="collection-button" onClick={() => openCollection(anime)}>＋ Adicionar à coleção</button></div>
+        <div className="anime-side-actions"><button className={`favorite-button ${libraryEntry?.favorite ? "selected" : ""}`} onClick={() => updateLibrary({ favorite: !libraryEntry?.favorite })}>{libraryEntry?.favorite ? "♥ Favorito" : "♡ Favoritar"}</button>{(anime.broadcastDay || anime.status === "Currently Airing") && <ReminderButton anime={anime} user={user} openAuth={() => openModal("login")} />}<button className="collection-button" onClick={() => openCollection(anime)}>＋ Adicionar à coleção</button></div>
       </section>
       <section className="page-shell anime-body">
         <div className="tabs" role="tablist">{tabs.map((item) => <button role="tab" aria-selected={tab === item} className={tab === item ? "active" : ""} onClick={() => setTab(item)} key={item}>{item}{item === "Discussões" && comments.length > 0 && <span>{comments.length}</span>}</button>)}</div>
@@ -1827,7 +1885,7 @@ type SocialSection = "feed" | "explore" | "notifications";
 
 type SocialNotification = {
   id: string;
-  type: "reply" | "like" | "follow" | "wiki";
+  type: "reply" | "like" | "follow" | "wiki" | "reminder";
   actor: string;
   actorAvatar?: string | null;
   title: string;
@@ -2084,7 +2142,7 @@ function DiscussionsView({ user }: { user: SessionUser | null | undefined }) {
 
           {section === "explore" && <section className="section-panel explore-panel"><div className="panel-intro"><p className="eyebrow">Encontre uma conversa real</p><h2>Explore a comunidade.</h2><p>Pesquise nas publicações que já foram registradas no Yugen.</p></div><label className="explore-search"><span>⌕</span><input value={exploreQuery} onChange={(event) => setExploreQuery(event.target.value)} placeholder="Pesquisar autor, anime ou texto" /></label><div className="timeline explore-results">{explorePosts.length ? explorePosts.map(renderPost) : <div className="social-empty"><span>⌕</span><h3>Nenhuma discussão encontrada</h3><p>Tente outra busca.</p></div>}</div></section>}
 
-          {section === "notifications" && <section className="section-panel notifications-panel"><div className="panel-intro split-panel"><div><p className="eyebrow">Atividade real da sua conta</p><h2>Notificações.</h2><p>Respostas, curtidas, seguidores e decisões da Wiki aparecem aqui quando acontecerem.</p></div>{user && <button className="ghost-button" type="button" onClick={loadNotifications} disabled={notificationsLoading}>↻ Atualizar</button>}</div>{!user ? <div className="social-empty"><span>♧</span><h3>Entre para ver suas notificações</h3><p>O Yugen mostrará somente atividades reais relacionadas à sua conta.</p><Link className="primary-button small" href="/api/auth/signin?callbackUrl=/discussions">Entrar</Link></div> : notificationsLoading ? <div className="social-empty"><span>◌</span><h3>Carregando notificações</h3></div> : notificationsError ? <div className="social-empty"><span>!</span><h3>Não foi possível atualizar</h3><p>{notificationsError}</p><button className="ghost-button" onClick={loadNotifications}>Tentar novamente</button></div> : notifications.length ? <div className="notification-list">{notifications.map((notification) => <Link className="notification-item" href={notification.animeSlug ? `/anime/${notification.animeSlug}?tab=${notification.type === "wiki" ? "wiki" : "discussions"}` : "/discussions"} key={notification.id}><span className="notification-icon">{notification.type === "reply" ? "↩" : notification.type === "like" ? "♡" : notification.type === "wiki" ? "◇" : "+"}</span><div><b>{notification.title}</b><p>{notification.description}</p><small>{notification.animeTitle ? `${notification.animeTitle} · ` : ""}{discussionTime(notification.createdAt)}</small></div></Link>)}</div> : <div className="social-empty"><span>♧</span><h3>Nenhuma notificação ainda</h3><p>Quando alguém responder, curtir, seguir você ou analisar sua edição, a atividade aparecerá aqui.</p></div>}</section>}
+          {section === "notifications" && <section className="section-panel notifications-panel"><div className="panel-intro split-panel"><div><p className="eyebrow">Atividade real da sua conta</p><h2>Notificações.</h2><p>Respostas, curtidas, seguidores, lembretes de episódios e decisões da Wiki aparecem aqui quando acontecerem.</p></div>{user && <button className="ghost-button" type="button" onClick={loadNotifications} disabled={notificationsLoading}>↻ Atualizar</button>}</div>{!user ? <div className="social-empty"><span>♧</span><h3>Entre para ver suas notificações</h3><p>O Yugen mostrará somente atividades reais relacionadas à sua conta.</p><Link className="primary-button small" href="/api/auth/signin?callbackUrl=/discussions">Entrar</Link></div> : notificationsLoading ? <div className="social-empty"><span>◌</span><h3>Carregando notificações</h3></div> : notificationsError ? <div className="social-empty"><span>!</span><h3>Não foi possível atualizar</h3><p>{notificationsError}</p><button className="ghost-button" onClick={loadNotifications}>Tentar novamente</button></div> : notifications.length ? <div className="notification-list">{notifications.map((notification) => <Link className="notification-item" href={notification.animeSlug ? notification.type === "reminder" ? `/anime/${notification.animeSlug}` : `/anime/${notification.animeSlug}?tab=${notification.type === "wiki" ? "wiki" : "discussions"}` : "/discussions"} key={notification.id}><span className="notification-icon">{notification.type === "reply" ? "↩" : notification.type === "like" ? "♡" : notification.type === "wiki" ? "◇" : notification.type === "reminder" ? "◷" : "+"}</span><div><b>{notification.title}</b><p>{notification.description}</p><small>{notification.animeTitle ? `${notification.animeTitle} · ` : ""}{discussionTime(notification.createdAt)}</small></div></Link>)}</div> : <div className="social-empty"><span>♧</span><h3>Nenhuma notificação ainda</h3><p>Quando alguém responder, curtir, seguir você, analisar sua edição ou chegar o dia de um anime lembrado, a atividade aparecerá aqui.</p></div>}</section>}
         </section>
 
         <aside className="social-rail">
@@ -2194,6 +2252,116 @@ function PublicProfileView({ username, user }: { username?: string; user: Sessio
   </main>;
 }
 
+function AdvancedLibraryView({ user, library, openAuth }: { user: SessionUser | null | undefined; library: LibraryEntry[]; openAuth: () => void }) {
+  const [data, setData] = useState<AdvancedLibraryData | null>(null);
+  const [loading, setLoading] = useState(Boolean(user));
+  const [error, setError] = useState("");
+  const [goal, setGoal] = useState(5);
+  const [savingGoal, setSavingGoal] = useState(false);
+  const [malUsername, setMalUsername] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadAdvanced(signal?: AbortSignal) {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const response = await fetch("/api/library/advanced", { cache: "no-store", signal });
+      const result = await response.json() as AdvancedLibraryData & { error?: string };
+      if (!response.ok) throw new Error(result.error || "Não foi possível carregar sua biblioteca avançada.");
+      setData(result);
+      setGoal(result.preferences?.weeklyEpisodeGoal || 5);
+      setMalUsername((current) => current || result.preferences?.malUsername || "");
+      setError("");
+    } catch (reason) {
+      if ((reason as { name?: string })?.name !== "AbortError") setError(reason instanceof Error ? reason.message : "Não foi possível carregar sua biblioteca avançada.");
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return;
+    const controller = new AbortController();
+    loadAdvanced(controller.signal);
+    const refresh = () => loadAdvanced();
+    window.addEventListener("yugen:advanced-library", refresh);
+    return () => { controller.abort(); window.removeEventListener("yugen:advanced-library", refresh); };
+  }, [user]);
+
+  async function saveGoal(event: FormEvent) {
+    event.preventDefault();
+    setSavingGoal(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/library/advanced", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "settings", weeklyEpisodeGoal: goal, remindersEnabled: data?.preferences.remindersEnabled ?? true }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Não foi possível salvar sua meta.");
+      setMessage("Meta semanal atualizada.");
+      await loadAdvanced();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Não foi possível salvar sua meta.");
+    } finally {
+      setSavingGoal(false);
+    }
+  }
+
+  async function importMal(event: FormEvent) {
+    event.preventDefault();
+    if (!malUsername.trim()) return;
+    setImporting(true);
+    setMessage("Lendo sua lista pública no MyAnimeList…");
+    try {
+      const response = await fetch("/api/import/mal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: malUsername.trim() }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Não foi possível importar sua lista.");
+      setMessage(`${result.importedCount} animes importados de @${result.username}.`);
+      window.dispatchEvent(new Event("yugen:library"));
+      await loadAdvanced();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Não foi possível importar sua lista.");
+      await loadAdvanced();
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function disableReminder(reminder: AdvancedLibraryData["reminders"][number]) {
+    const response = await fetch("/api/library/advanced", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "reminder", enabled: false, anime: reminder }) });
+    if (response.ok) await loadAdvanced();
+  }
+
+  if (user === undefined) return <main className="page-shell advanced-library-page"><div className="advanced-loading detail-skeleton" /></main>;
+  if (!user) return <main className="page-shell advanced-library-page"><section className="library-signin"><p className="eyebrow">Seu histórico, do seu jeito</p><h1>Uma biblioteca que<br /><em>acompanha você.</em></h1><p>Entre para importar sua lista, registrar episódios, definir metas e receber lembretes.</p><button className="primary-button" onClick={openAuth}>Entrar no Yugen</button></section></main>;
+  if (loading && !data) return <main className="page-shell advanced-library-page"><div className="advanced-loading detail-skeleton" /></main>;
+  if (error && !data) return <main className="page-shell detail-error-page"><p className="eyebrow">Biblioteca avançada</p><h1>Não foi possível carregar.</h1><p>{error}</p><button className="primary-button" onClick={() => loadAdvanced()}>Tentar novamente</button></main>;
+
+  const weeklyEpisodes = data?.weeklyEpisodes || 0;
+  const weeklyGoal = data?.preferences.weeklyEpisodeGoal || goal || 5;
+  const weeklyPercent = Math.min(100, Math.round((weeklyEpisodes / weeklyGoal) * 100));
+  const maxGenre = Math.max(1, ...(data?.stats.genres.map((item) => item.count) || [1]));
+  const maxStudio = Math.max(1, ...(data?.stats.studios.map((item) => item.count) || [1]));
+  const dayLabel = (day?: string | null) => broadcastDays.find(([value]) => value === day)?.[1] || day || "Dia a confirmar";
+
+  return <main className="page-shell advanced-library-page">
+    <header className="page-title split"><div><p className="eyebrow">Biblioteca avançada</p><h1>Seu ritmo.<br /><em>Sua história.</em></h1><p>Progresso, estatísticas, importações e próximos episódios reunidos em um só lugar.</p></div><div className="library-total"><b>{library.length}</b><span>títulos na biblioteca</span></div></header>
+
+    <section className="weekly-goal-card"><div><p className="eyebrow">Meta desta semana</p><h2>{weeklyEpisodes} de {weeklyGoal} episódios</h2><p>{weeklyEpisodes >= weeklyGoal ? "Meta concluída. Continue no seu ritmo." : `Faltam ${weeklyGoal - weeklyEpisodes} episódios para concluir.`}</p></div><div className="weekly-ring" style={{ "--weekly-progress": `${weeklyPercent * 3.6}deg` } as React.CSSProperties}><span><b>{weeklyPercent}%</b><small>concluído</small></span></div><form onSubmit={saveGoal}><label>Meta de episódios<input type="number" min="1" max="100" value={goal} onChange={(event) => setGoal(Number(event.target.value))} /></label><button className="ghost-button" disabled={savingGoal}>{savingGoal ? "Salvando…" : "Atualizar meta"}</button></form></section>
+
+    <div className="advanced-library-grid">
+      <section className="advanced-panel mal-import-panel" id="import"><p className="eyebrow">Importação real</p><h2>MyAnimeList</h2><p>Use seu nome de usuário do MAL. Sua lista precisa estar pública; o Yugen apenas lê os dados e não altera sua conta original.</p><form onSubmit={importMal}><label>Nome de usuário no MAL<input value={malUsername} onChange={(event) => setMalUsername(event.target.value)} placeholder="Ex.: meu_usuario" pattern="[A-Za-z0-9_-]{2,32}" required /></label><button className="primary-button" disabled={importing}>{importing ? "Importando…" : "Importar ou atualizar lista"}</button></form>{data?.preferences.lastImportedAt && <small>Última importação: {new Date(data.preferences.lastImportedAt).toLocaleString("pt-BR")}</small>}{message && <p className="advanced-message" role="status">{message}</p>}</section>
+
+      <section className="advanced-panel status-panel"><p className="eyebrow">Visão geral</p><h2>Seus status</h2><div className="status-stat-grid">{(["watching", "to_watch", "watched"] as LibraryStatus[]).map((status) => <div key={status}><b>{data?.stats.statuses.find((item) => item.status === status)?.count || 0}</b><span>{libraryStatusLabel(status)}</span></div>)}</div><div className="score-summary"><span>Nota média pessoal</span><b>{(() => { const rated = data?.stats.scores.filter((item) => item.score) || []; const total = rated.reduce((sum, item) => sum + item.count, 0); return total ? (rated.reduce((sum, item) => sum + Number(item.score) * item.count, 0) / total).toFixed(1) : "—"; })()}</b></div></section>
+    </div>
+
+    <section className="advanced-stats-section"><div className="section-heading"><div><p className="eyebrow">Seu perfil de espectador</p><h2>Estatísticas</h2></div></div><div className="advanced-library-grid"><article className="advanced-panel"><h3>Gêneros mais vistos</h3>{data?.stats.genres.length ? <div className="stat-bars">{data.stats.genres.map((item) => <div key={item.name}><span><b>{genrePt(item.name)}</b><em>{item.count}</em></span><i><u style={{ width: `${(item.count / maxGenre) * 100}%` }} /></i></div>)}</div> : <p className="empty-copy">Adicione animes com gêneros à biblioteca para gerar esta estatística.</p>}</article><article className="advanced-panel"><h3>Estúdios recorrentes</h3>{data?.stats.studios.length ? <div className="stat-bars">{data.stats.studios.map((item) => <div key={item.name}><span><b>{item.name}</b><em>{item.count}</em></span><i><u style={{ width: `${(item.count / maxStudio) * 100}%` }} /></i></div>)}</div> : <p className="empty-copy">Os estúdios aparecerão conforme sua biblioteca for sincronizada.</p>}</article></div></section>
+
+    <section className="advanced-library-grid history-reminders-grid"><article className="advanced-panel"><div className="panel-heading"><div><p className="eyebrow">Registro automático</p><h2>Histórico de episódios</h2></div><span>{data?.history.length || 0} atividades</span></div>{data?.history.length ? <div className="episode-history">{data.history.slice(0, 20).map((item) => <Link href={`/anime/${item.slug}`} key={item.id}><span className="history-poster" style={item.image ? { backgroundImage: `url(${item.image})` } : undefined} /><div><b>{item.title}</b><span>{item.source === "mal_import" ? "Importado do MAL" : item.newProgress > item.previousProgress ? `Avançou para o episódio ${item.newProgress}` : `Progresso ajustado para ${item.newProgress}`}</span><small>{new Date(item.createdAt).toLocaleString("pt-BR")}</small></div><em>{item.newProgress > item.previousProgress ? `+${item.newProgress - item.previousProgress}` : item.newProgress - item.previousProgress}</em></Link>)}</div> : <p className="empty-copy">Marque um episódio como assistido para iniciar seu histórico.</p>}</article><article className="advanced-panel"><div className="panel-heading"><div><p className="eyebrow">Próximos episódios</p><h2>Lembretes</h2></div><span>{data?.reminders.length || 0} ativos</span></div>{data?.reminders.length ? <div className="reminder-list">{data.reminders.map((item) => <div key={item.slug}><span className="reminder-poster" style={item.image ? { backgroundImage: `url(${item.image})` } : undefined} /><div><Link href={`/anime/${item.slug}`}>{item.title}</Link><span>{dayLabel(item.broadcastDay)}{item.broadcastTime ? ` · ${item.broadcastTime}` : " · horário a confirmar"}</span></div><button onClick={() => disableReminder(item)} aria-label={`Desativar lembrete de ${item.title}`}>×</button></div>)}</div> : <p className="empty-copy">Ative “Lembrar episódios” em um anime em exibição ou no calendário.</p>}<Link href="/calendar" className="text-link">Abrir calendário semanal →</Link></article></section>
+
+    {Boolean(data?.imports.length) && <section className="advanced-panel import-history"><p className="eyebrow">Auditoria</p><h2>Importações recentes</h2><div>{data?.imports.map((item) => <article key={item.id}><span className={`import-state ${item.status}`} /> <b>@{item.externalUsername}</b><span>{item.status === "completed" ? `${item.importedCount} títulos` : item.status === "running" ? "Em andamento" : "Falhou"}</span><small>{new Date(item.createdAt).toLocaleString("pt-BR")}</small>{item.errorMessage && <em>{item.errorMessage}</em>}</article>)}</div></section>}
+  </main>;
+}
+
 function SettingsView({ user, onUserChange }: { user: SessionUser | null | undefined; onUserChange: (user: SessionUser) => void }) {
   const [saved, setSaved] = useState(false);
   const [danger, setDanger] = useState(false);
@@ -2238,7 +2406,7 @@ function SettingsView({ user, onUserChange }: { user: SessionUser | null | undef
     }
   }
 
-  return <main className="settings-page page-shell"><header className="page-title"><p className="eyebrow">Seu espaço</p><h1>Configurações<br /><em>da conta.</em></h1></header><div className="settings-layout"><aside><a href="#profile" className="active">Perfil</a><a href="#account">Conta</a><a href="#imports">Importações</a><a href="#danger">Zona de perigo</a></aside><section><div id="profile" className="setting-group"><p className="eyebrow">Identidade pública</p><h2>Perfil</h2>{activeUser.bannerUrl && <div className="settings-banner-preview" style={profileImageStyle(activeUser.bannerUrl)} role="img" aria-label="Banner atual" />}<div className="media-edit"><div className={`profile-avatar ${activeUser.avatarUrl ? "has-image" : ""}`} style={profileImageStyle(activeUser.avatarUrl)}>{!activeUser.avatarUrl && userInitials(activeUser)}</div><input ref={avatarInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => uploadProfileImage("avatar", event.target.files?.[0])} /><button className="ghost-button" type="button" onClick={() => avatarInput.current?.click()} disabled={Boolean(uploading)}>{uploading === "avatar" ? "Enviando…" : "Alterar avatar"}</button><input ref={bannerInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => uploadProfileImage("banner", event.target.files?.[0])} /><button className="ghost-button" type="button" onClick={() => bannerInput.current?.click()} disabled={Boolean(uploading)}>{uploading === "banner" ? "Enviando…" : "Alterar banner"}</button></div>{uploadStatus && <p className="upload-status" role="status">{uploadStatus}</p>}<small className="media-note">JPG, PNG, WebP ou GIF, com até 5 MB.</small><label>Nome de usuário<input value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Biografia<textarea defaultValue={activeUser.bio || ""} placeholder="Conte um pouco sobre você." /></label></div><div id="account" className="setting-group"><p className="eyebrow">Dados privados</p><h2>Conta</h2><label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" /></label><label>Senha atual<input placeholder="••••••••" type="password" /></label><label>Nova senha<input placeholder="Pelo menos 12 caracteres" type="password" /></label><button className="primary-button" onClick={() => setSaved(true)}>{saved ? "✓ Alterações salvas" : "Salvar alterações"}</button></div><div id="imports" className="setting-group import-row"><div><p className="eyebrow">Traga seu histórico</p><h2>MyAnimeList</h2><p>Importe títulos concluídos, notas e status. Nada será alterado na fonte original.</p></div><button className="glass-button">Importar do MyAnimeList ↗</button></div><div id="danger" className="setting-group danger"><p className="eyebrow">Zona de perigo</p><h2>Excluir conta</h2><p>Isso remove permanentemente seu perfil, listas, coleções, avaliações e comentários após um prazo de recuperação de 14 dias.</p>{danger ? <div className="danger-confirm"><span>Digite EXCLUIR no fluxo final de produção.</span><button onClick={() => setDanger(false)}>Cancelar</button></div> : <button onClick={() => setDanger(true)}>Excluir conta</button>}</div></section></div></main>;
+  return <main className="settings-page page-shell"><header className="page-title"><p className="eyebrow">Seu espaço</p><h1>Configurações<br /><em>da conta.</em></h1></header><div className="settings-layout"><aside><a href="#profile" className="active">Perfil</a><a href="#account">Conta</a><a href="#imports">Importações</a><a href="#danger">Zona de perigo</a></aside><section><div id="profile" className="setting-group"><p className="eyebrow">Identidade pública</p><h2>Perfil</h2>{activeUser.bannerUrl && <div className="settings-banner-preview" style={profileImageStyle(activeUser.bannerUrl)} role="img" aria-label="Banner atual" />}<div className="media-edit"><div className={`profile-avatar ${activeUser.avatarUrl ? "has-image" : ""}`} style={profileImageStyle(activeUser.avatarUrl)}>{!activeUser.avatarUrl && userInitials(activeUser)}</div><input ref={avatarInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => uploadProfileImage("avatar", event.target.files?.[0])} /><button className="ghost-button" type="button" onClick={() => avatarInput.current?.click()} disabled={Boolean(uploading)}>{uploading === "avatar" ? "Enviando…" : "Alterar avatar"}</button><input ref={bannerInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => uploadProfileImage("banner", event.target.files?.[0])} /><button className="ghost-button" type="button" onClick={() => bannerInput.current?.click()} disabled={Boolean(uploading)}>{uploading === "banner" ? "Enviando…" : "Alterar banner"}</button></div>{uploadStatus && <p className="upload-status" role="status">{uploadStatus}</p>}<small className="media-note">JPG, PNG, WebP ou GIF, com até 5 MB.</small><label>Nome de usuário<input value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Biografia<textarea defaultValue={activeUser.bio || ""} placeholder="Conte um pouco sobre você." /></label></div><div id="account" className="setting-group"><p className="eyebrow">Dados privados</p><h2>Conta</h2><label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" /></label><label>Senha atual<input placeholder="••••••••" type="password" /></label><label>Nova senha<input placeholder="Pelo menos 12 caracteres" type="password" /></label><button className="primary-button" onClick={() => setSaved(true)}>{saved ? "✓ Alterações salvas" : "Salvar alterações"}</button></div><div id="imports" className="setting-group import-row"><div><p className="eyebrow">Traga seu histórico</p><h2>MyAnimeList</h2><p>Importe títulos concluídos, notas e status. Nada será alterado na fonte original.</p></div><Link href="/library#import" className="glass-button">Abrir importador do MyAnimeList ↗</Link></div><div id="danger" className="setting-group danger"><p className="eyebrow">Zona de perigo</p><h2>Excluir conta</h2><p>Isso remove permanentemente seu perfil, listas, coleções, avaliações e comentários após um prazo de recuperação de 14 dias.</p>{danger ? <div className="danger-confirm"><span>Digite EXCLUIR no fluxo final de produção.</span><button onClick={() => setDanger(false)}>Cancelar</button></div> : <button onClick={() => setDanger(true)}>Excluir conta</button>}</div></section></div></main>;
 }
 
 function ModerationRevisionCard({ revision, onDone }: { revision: WikiRevision; onDone: (id: string) => void }) {
@@ -2394,7 +2562,7 @@ function CollectionModal({ type, onClose, onSwitch, anime }: { type: "collection
 }
 
 function Footer() {
-  return <footer className="site-footer"><Link href="/" className="brand">Yugen<span>.</span></Link><p>Animes selecionados com intenção.</p><nav><Link href="/catalog">Catálogo</Link><Link href="/collections">Coleções</Link><Link href="/discussions">Discussões</Link><Link href="/news">Notícias</Link><Link href="/blueprint">Plano de desenvolvimento</Link></nav><span>© 2026 Yugen</span></footer>;
+  return <footer className="site-footer"><Link href="/" className="brand">Yugen<span>.</span></Link><p>Animes selecionados com intenção.</p><nav><Link href="/catalog">Catálogo</Link><Link href="/library">Biblioteca</Link><Link href="/collections">Coleções</Link><Link href="/discussions">Discussões</Link><Link href="/news">Notícias</Link><Link href="/blueprint">Plano de desenvolvimento</Link></nav><span>© 2026 Yugen</span></footer>;
 }
 
 export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
@@ -2425,11 +2593,14 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
   useEffect(() => {
     if (!user) return;
     const controller = new AbortController();
-    fetch("/api/library", { cache: "no-store", signal: controller.signal })
+    const loadLibrary = (signal?: AbortSignal) => fetch("/api/library", { cache: "no-store", signal })
       .then((response) => response.ok ? response.json() : { entries: [] })
       .then((data) => setLibrary(data.entries || []))
       .catch((error) => { if (error.name !== "AbortError") setLibrary([]); });
-    return () => controller.abort();
+    loadLibrary(controller.signal);
+    const refresh = () => loadLibrary();
+    window.addEventListener("yugen:library", refresh);
+    return () => { controller.abort(); window.removeEventListener("yugen:library", refresh); };
   }, [user]);
   async function saveLibrary(anime: Anime, patch: LibraryPatch) {
     if (!user) throw new Error("authentication_required");
@@ -2442,7 +2613,12 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
       episodes: anime.episodes,
       year: anime.year,
       format: anime.format,
+      season: anime.season,
+      airingStatus: anime.status,
       genres: anime.genres || [anime.genre].filter(Boolean),
+      studio: anime.studios?.[0] || anime.studio,
+      broadcastDay: anime.broadcastDay,
+      broadcastTime: anime.broadcastTime,
       status: patch.status || current?.status || "to_watch",
       progressEpisodes: patch.progressEpisodes ?? current?.progressEpisodes ?? 0,
       score: patch.score === undefined ? current?.score ?? null : patch.score,
@@ -2465,5 +2641,5 @@ export function KurosawApp({ view, slug }: { view: View; slug?: string }) {
     setCollectionAnime(anime);
     setModal("collection");
   }
-  return <div className={`site ${theme}`}><Header theme={theme} onTheme={toggleTheme} onAuth={setModal} user={user} language={language} onLanguage={changeLanguage} />{view === "home" && <HomeView openAuth={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "catalog" && <CatalogView />}{view === "anime" && <AnimeView slug={slug} openModal={setModal} openCollection={openCollection} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "calendar" && <CalendarView user={user} library={library} saveLibrary={saveLibrary} openAuth={setModal} />}{view === "character" && <CharacterView slug={slug} />}{view === "collections" && <CollectionsView openModal={setModal} user={user} />}{view === "discussions" && <DiscussionsView user={user} />}{view === "news" && <NewsView />}{view === "article" && <ArticleView />}{view === "profile" && <ProfileView user={user} library={library} />}{view === "public-profile" && <PublicProfileView username={slug} user={user} />}{view === "settings" && <SettingsView user={user} onUserChange={setUser} />}{view === "moderation" && <ModerationView user={user} />}{view === "blueprint" && <BlueprintView />}<Footer />{modal && ["join", "login", "forgot"].includes(modal) && <AuthModal type={modal as "join" | "login" | "forgot"} onClose={() => setModal(null)} switchTo={setModal} />}{modal && ["collection", "create"].includes(modal) && <CollectionModal type={modal as "collection" | "create"} onClose={() => setModal(null)} onSwitch={(type) => setModal(type)} anime={collectionAnime} />}</div>;
+  return <div className={`site ${theme}`}><Header theme={theme} onTheme={toggleTheme} onAuth={setModal} user={user} language={language} onLanguage={changeLanguage} />{view === "home" && <HomeView openAuth={setModal} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "catalog" && <CatalogView />}{view === "anime" && <AnimeView slug={slug} openModal={setModal} openCollection={openCollection} language={language} user={user} library={library} saveLibrary={saveLibrary} />}{view === "calendar" && <CalendarView user={user} openAuth={setModal} />}{view === "character" && <CharacterView slug={slug} />}{view === "collections" && <CollectionsView openModal={setModal} user={user} />}{view === "discussions" && <DiscussionsView user={user} />}{view === "news" && <NewsView />}{view === "article" && <ArticleView />}{view === "profile" && <ProfileView user={user} library={library} />}{view === "public-profile" && <PublicProfileView username={slug} user={user} />}{view === "settings" && <SettingsView user={user} onUserChange={setUser} />}{view === "library" && <AdvancedLibraryView user={user} library={library} openAuth={() => setModal("login")} />}{view === "moderation" && <ModerationView user={user} />}{view === "blueprint" && <BlueprintView />}<Footer />{modal && ["join", "login", "forgot"].includes(modal) && <AuthModal type={modal as "join" | "login" | "forgot"} onClose={() => setModal(null)} switchTo={setModal} />}{modal && ["collection", "create"].includes(modal) && <CollectionModal type={modal as "collection" | "create"} onClose={() => setModal(null)} onSwitch={(type) => setModal(type)} anime={collectionAnime} />}</div>;
 }

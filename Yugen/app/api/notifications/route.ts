@@ -1,7 +1,7 @@
 import { and, desc, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { getDb } from "../../../db";
-import { animes, animeRevisions, commentLikes, comments, discussions, follows, users } from "../../../db/schema";
+import { animeReminders, animes, animeRevisions, commentLikes, comments, discussions, follows, users } from "../../../db/schema";
 import { getSessionIdentity } from "../../session-auth";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +21,8 @@ export async function GET() {
     const likeAuthors = alias(users, "notification_like_authors");
     const followerUsers = alias(users, "notification_follower_users");
 
-    const [replyRows, likeRows, followRows, revisionRows] = await Promise.all([
+    const today = `${new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "America/Recife" }).format(new Date())}s`;
+    const [replyRows, likeRows, followRows, revisionRows, reminderRows] = await Promise.all([
       db.select({
         id: comments.id,
         actor: replyAuthors.username,
@@ -77,6 +78,15 @@ export async function GET() {
         .where(and(eq(animeRevisions.editorId, currentUser.id), ne(animeRevisions.status, "pending"), isNotNull(animeRevisions.reviewedAt)))
         .orderBy(desc(animeRevisions.reviewedAt))
         .limit(50),
+      db.select({
+        animeId: animes.id,
+        animeSlug: animes.slug,
+        animeTitle: animes.title,
+        broadcastTime: animes.broadcastTime,
+      }).from(animeReminders)
+        .innerJoin(animes, eq(animeReminders.animeId, animes.id))
+        .where(and(eq(animeReminders.userId, currentUser.id), eq(animeReminders.enabled, true), eq(animes.broadcastDay, today)))
+        .limit(30),
     ]);
 
     const notifications = [
@@ -121,6 +131,17 @@ export async function GET() {
         title: row.status === "approved" ? `Sua edição de ${row.animeTitle} foi aprovada` : `Sua edição de ${row.animeTitle} foi rejeitada`,
         description: row.reviewNote || (row.status === "approved" ? "A correção já está publicada para toda a comunidade." : "Consulte o histórico da Wiki para revisar a decisão."),
         createdAt: row.createdAt!,
+        animeSlug: row.animeSlug,
+        animeTitle: row.animeTitle,
+      })),
+      ...reminderRows.map((row) => ({
+        id: `reminder-${row.animeId}-${new Date().toISOString().slice(0, 10)}`,
+        type: "reminder" as const,
+        actor: "Yugen Calendário",
+        actorAvatar: null,
+        title: `Novo episódio de ${row.animeTitle} é exibido hoje`,
+        description: row.broadcastTime ? `Horário informado pela Jikan: ${row.broadcastTime}.` : "O horário ainda não foi informado pela Jikan.",
+        createdAt: new Date().toISOString(),
         animeSlug: row.animeSlug,
         animeTitle: row.animeTitle,
       })),

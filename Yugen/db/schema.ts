@@ -50,6 +50,8 @@ export const animes = pgTable("animes", {
   airingStatus: text("airing_status").notNull().default("upcoming"),
   startDate: text("start_date"),
   endDate: text("end_date"),
+  broadcastDay: text("broadcast_day"),
+  broadcastTime: text("broadcast_time"),
   posterUrl: text("poster_url"),
   bannerUrl: text("banner_url"),
   trailerUrl: text("trailer_url"),
@@ -90,6 +92,48 @@ export const userAnimeStatuses = pgTable("user_anime_statuses", {
   primaryKey({ columns: [table.userId, table.animeId] }),
   index("user_anime_status_idx").on(table.userId, table.status),
 ]);
+
+export const libraryPreferences = pgTable("library_preferences", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  weeklyEpisodeGoal: integer("weekly_episode_goal").notNull().default(5),
+  remindersEnabled: boolean("reminders_enabled").notNull().default(true),
+  malUsername: text("mal_username"),
+  lastImportedAt: timestamp("last_imported_at", { withTimezone: true, mode: "string" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+});
+
+export const episodeHistory = pgTable("episode_history", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  animeId: text("anime_id").notNull().references(() => animes.id, { onDelete: "cascade" }),
+  previousProgress: integer("previous_progress").notNull().default(0),
+  newProgress: integer("new_progress").notNull(),
+  source: text("source", { enum: ["manual", "mal_import"] }).notNull().default("manual"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+}, (table) => [
+  index("episode_history_user_date_idx").on(table.userId, table.createdAt),
+  index("episode_history_anime_idx").on(table.animeId, table.createdAt),
+]);
+
+export const animeReminders = pgTable("anime_reminders", {
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  animeId: text("anime_id").notNull().references(() => animes.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.userId, table.animeId] })]);
+
+export const libraryImports = pgTable("library_imports", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: text("provider", { enum: ["myanimelist"] }).notNull().default("myanimelist"),
+  externalUsername: text("external_username").notNull(),
+  importedCount: integer("imported_count").notNull().default(0),
+  status: text("status", { enum: ["running", "completed", "failed"] }).notNull().default("running"),
+  errorMessage: text("error_message"),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "string" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+}, (table) => [index("library_imports_user_idx").on(table.userId, table.createdAt)]);
 
 export const collections = pgTable("collections", {
   id: text("id").primaryKey(),

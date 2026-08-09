@@ -1,6 +1,6 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
-import { animeGenres, animes, genres, userAnimeStatuses, users } from "../../../db/schema";
+import { animeGenres, animes, episodeHistory, genres, studios, userAnimeStatuses, users } from "../../../db/schema";
 import { getSessionIdentity } from "../../session-auth";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,9 @@ type LibraryPayload = {
     season?: string;
     status?: string;
     genres?: string[];
+    studio?: string;
+    broadcastDay?: string;
+    broadcastTime?: string;
   };
   status?: LibraryStatus;
   progressEpisodes?: number;
@@ -58,6 +61,11 @@ export async function GET() {
       episodes: animes.episodeCount,
       year: animes.seasonYear,
       format: animes.format,
+      season: animes.season,
+      airingStatus: animes.airingStatus,
+      studio: studios.name,
+      broadcastDay: animes.broadcastDay,
+      broadcastTime: animes.broadcastTime,
       status: userAnimeStatuses.status,
       progressEpisodes: userAnimeStatuses.progressEpisodes,
       score: userAnimeStatuses.score,
@@ -65,6 +73,7 @@ export async function GET() {
       updatedAt: userAnimeStatuses.updatedAt,
     }).from(userAnimeStatuses)
       .innerJoin(animes, eq(userAnimeStatuses.animeId, animes.id))
+      .leftJoin(studios, eq(animes.studioId, studios.id))
       .where(eq(userAnimeStatuses.userId, user.id));
     const animeIds = entries.map((entry) => entry.animeId);
     const genreRows = animeIds.length ? await db.select({ animeId: animeGenres.animeId, name: genres.name })
@@ -90,6 +99,14 @@ export async function POST(request: Request) {
     if (!slug || !title) return Response.json({ error: "Anime inválido." }, { status: 400 });
 
     const { db, user } = context;
+    const studioName = source?.studio?.trim() || "";
+    let studioId: string | null = null;
+    if (studioName) {
+      const studioSlug = genreSlug(studioName);
+      await db.insert(studios).values({ id: crypto.randomUUID(), name: studioName, slug: studioSlug }).onConflictDoNothing({ target: studios.slug });
+      const [savedStudio] = await db.select({ id: studios.id }).from(studios).where(eq(studios.slug, studioSlug)).limit(1);
+      studioId = savedStudio?.id || null;
+    }
     await db.insert(animes).values({
       id: crypto.randomUUID(),
       slug,
@@ -101,6 +118,9 @@ export async function POST(request: Request) {
       seasonYear: source?.year || null,
       airingStatus: source?.status || "unknown",
       posterUrl: source?.image || null,
+      studioId,
+      broadcastDay: source?.broadcastDay || null,
+      broadcastTime: source?.broadcastTime || null,
     }).onConflictDoUpdate({
       target: animes.slug,
       set: {
@@ -111,6 +131,9 @@ export async function POST(request: Request) {
         seasonYear: source?.year || null,
         airingStatus: source?.status || "unknown",
         posterUrl: source?.image || null,
+        studioId,
+        broadcastDay: source?.broadcastDay || null,
+        broadcastTime: source?.broadcastTime || null,
         updatedAt: sql`CURRENT_TIMESTAMP`,
       },
     });
@@ -130,6 +153,8 @@ export async function POST(request: Request) {
     }
     const progress = Math.max(0, Math.min(payload.progressEpisodes ?? 0, source?.episodes || Number.MAX_SAFE_INTEGER));
     const score = payload.score == null ? null : Math.max(1, Math.min(10, Math.round(payload.score)));
+    const [previous] = await db.select({ progressEpisodes: userAnimeStatuses.progressEpisodes }).from(userAnimeStatuses)
+      .where(sql`${userAnimeStatuses.userId} = ${user.id} AND ${userAnimeStatuses.animeId} = ${anime.id}`).limit(1);
 
     await db.insert(userAnimeStatuses).values({
       userId: user.id,
@@ -149,6 +174,17 @@ export async function POST(request: Request) {
       },
     });
 
+    if ((previous?.progressEpisodes ?? 0) !== progress) {
+      await db.insert(episodeHistory).values({
+        id: crypto.randomUUID(),
+        userId: user.id,
+        animeId: anime.id,
+        previousProgress: previous?.progressEpisodes ?? 0,
+        newProgress: progress,
+        source: "manual",
+      });
+    }
+
     return Response.json({
       entry: {
         slug,
@@ -157,6 +193,11 @@ export async function POST(request: Request) {
         episodes: source?.episodes ?? null,
         year: source?.year || null,
         format: source?.format || "TV",
+        season: source?.season || null,
+        airingStatus: source?.status || "unknown",
+        studio: studioName || null,
+        broadcastDay: source?.broadcastDay || null,
+        broadcastTime: source?.broadcastTime || null,
         genres: source?.genres || [],
         status: payload.status || "to_watch",
         progressEpisodes: progress,
