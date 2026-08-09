@@ -1438,7 +1438,9 @@ type YouTubePlayer = {
   isMuted: () => boolean;
   loadModule: (module: "captions") => void;
   unloadModule: (module: "captions") => void;
-  setOption: (module: "captions", option: "track", value: { languageCode: string }) => void;
+  getOptions: (module?: "captions") => string[];
+  getOption: (module: "captions", option: "tracklist") => unknown;
+  setOption: (module: "captions", option: "track", value: { languageCode: string; translationLanguage?: { languageCode: string } }) => void;
   getIframe: () => HTMLIFrameElement;
   destroy: () => void;
 };
@@ -1451,6 +1453,7 @@ type YouTubePlayerOptions = {
     onReady: (event: { target: YouTubePlayer }) => void;
     onStateChange: (event: { data: number }) => void;
     onPlaybackRateChange: (event: { data: number }) => void;
+    onApiChange: (event: { target: YouTubePlayer }) => void;
   };
 };
 
@@ -1479,22 +1482,65 @@ function youtubeVideoId(url?: string | null) {
   return url?.match(/(?:embed\/|youtu\.be\/|[?&]v=)([A-Za-z0-9_-]{6,})/)?.[1] || null;
 }
 
-const trailerLanguage: Record<Language, { code: string; locale: string; name: string; volume: string; captionsOn: string; captionsOff: string }> = {
-  pt: { code: "pt", locale: "pt-BR", name: "Português", volume: "Volume do trailer", captionsOn: "Desativar legendas em português", captionsOff: "Ativar legendas em português" },
-  en: { code: "en", locale: "en", name: "English", volume: "Trailer volume", captionsOn: "Turn off English captions", captionsOff: "Turn on English captions" },
-  es: { code: "es", locale: "es", name: "Español", volume: "Volumen del tráiler", captionsOn: "Desactivar subtítulos en español", captionsOff: "Activar subtítulos en español" },
+type YouTubeCaptionTrack = {
+  languageCode?: string;
+  languageName?: string;
+  kind?: string;
+  isTranslatable?: boolean;
+  is_translatable?: boolean;
 };
+
+const trailerLanguage: Record<Language, { code: string; locale: string; name: string; volume: string; captionsOn: string; captionsOff: string; captionsUnavailable: string }> = {
+  pt: { code: "pt", locale: "pt-BR", name: "Português", volume: "Volume do trailer", captionsOn: "Desativar legendas em português", captionsOff: "Ativar legendas em português", captionsUnavailable: "Este trailer não possui legendas disponíveis" },
+  en: { code: "en", locale: "en", name: "English", volume: "Trailer volume", captionsOn: "Turn off English captions", captionsOff: "Turn on English captions", captionsUnavailable: "Captions are not available for this trailer" },
+  es: { code: "es", locale: "es", name: "Español", volume: "Volumen del tráiler", captionsOn: "Desactivar subtítulos en español", captionsOff: "Activar subtítulos en español", captionsUnavailable: "Este tráiler no tiene subtítulos disponibles" },
+};
+
+function activateYouTubeCaptions(player: YouTubePlayer, targetLanguage: string) {
+  try {
+    player.loadModule("captions");
+    const options = player.getOptions("captions");
+    if (!options.includes("track")) return null;
+    const value = player.getOption("captions", "tracklist");
+    const tracks = Array.isArray(value) ? value as YouTubeCaptionTrack[] : [];
+    if (!tracks.length) return false;
+
+    const target = targetLanguage.toLowerCase();
+    const direct = tracks.find((track) => {
+      const languageCode = track.languageCode?.toLowerCase() || "";
+      return languageCode === target || languageCode.startsWith(`${target}-`);
+    });
+    if (direct?.languageCode) {
+      player.setOption("captions", "track", { languageCode: direct.languageCode });
+      return true;
+    }
+
+    const source = tracks.find((track) => track.kind === "asr") || tracks[0];
+    if (!source?.languageCode) return false;
+    const canTranslate = source.isTranslatable !== false && source.is_translatable !== false;
+    player.setOption("captions", "track", canTranslate
+      ? { languageCode: source.languageCode, translationLanguage: { languageCode: target } }
+      : { languageCode: source.languageCode });
+    return true;
+  } catch {
+    return null;
+  }
+}
 
 function AnimeTrailerBanner({ anime, language }: { anime: Anime; language: Language }) {
   const videoId = youtubeVideoId(anime.trailerUrl);
+  const heroRef = useRef<HTMLElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
   const volumeRef = useRef(65);
+  const captionsEnabledRef = useRef(true);
   const [playing, setPlaying] = useState(true);
   const [muted, setMuted] = useState(true);
   const [volume, setVolume] = useState(65);
   const [speed, setSpeed] = useState(1);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const [captionsAvailable, setCaptionsAvailable] = useState(true);
+  const [fullscreen, setFullscreen] = useState(false);
   const caption = trailerLanguage[language];
 
   useEffect(() => {
@@ -1502,6 +1548,12 @@ function AnimeTrailerBanner({ anime, language }: { anime: Anime; language: Langu
     if (!Number.isFinite(savedVolume) || savedVolume < 0 || savedVolume > 100) return;
     volumeRef.current = savedVolume;
     setVolume(savedVolume);
+  }, []);
+
+  useEffect(() => {
+    const updateFullscreen = () => setFullscreen(document.fullscreenElement === heroRef.current);
+    document.addEventListener("fullscreenchange", updateFullscreen);
+    return () => document.removeEventListener("fullscreenchange", updateFullscreen);
   }, []);
 
   useEffect(() => {
@@ -1539,13 +1591,25 @@ function AnimeTrailerBanner({ anime, language }: { anime: Anime; language: Langu
             target.setVolume(volumeRef.current);
             target.mute();
             target.playVideo();
+            captionsEnabledRef.current = true;
             target.loadModule("captions");
-            target.setOption("captions", "track", { languageCode: caption.code });
             setMuted(true);
             setCaptionsEnabled(true);
+            setCaptionsAvailable(true);
           },
           onStateChange: ({ data }) => setPlaying(data === 1),
           onPlaybackRateChange: ({ data }) => setSpeed(data),
+          onApiChange: ({ target }) => {
+            if (!captionsEnabledRef.current) return;
+            const available = activateYouTubeCaptions(target, caption.code);
+            if (available !== null) {
+              setCaptionsAvailable(available);
+              if (!available) {
+                captionsEnabledRef.current = false;
+                setCaptionsEnabled(false);
+              }
+            }
+          },
         },
       });
     }
@@ -1625,20 +1689,34 @@ function AnimeTrailerBanner({ anime, language }: { anime: Anime; language: Langu
   function toggleCaptions() {
     const player = playerRef.current;
     if (!player) return;
-    if (captionsEnabled) player.unloadModule("captions");
-    else {
-      player.loadModule("captions");
-      player.setOption("captions", "track", { languageCode: caption.code });
+    if (captionsEnabled) {
+      captionsEnabledRef.current = false;
+      player.unloadModule("captions");
+      setCaptionsEnabled(false);
     }
-    setCaptionsEnabled((current) => !current);
+    else {
+      captionsEnabledRef.current = true;
+      const available = activateYouTubeCaptions(player, caption.code);
+      if (available === false) {
+        captionsEnabledRef.current = false;
+        setCaptionsAvailable(false);
+        setCaptionsEnabled(false);
+        return;
+      }
+      setCaptionsAvailable(true);
+      setCaptionsEnabled(true);
+    }
   }
 
   function openFullscreen() {
-    playerRef.current?.getIframe().requestFullscreen?.();
+    const hero = heroRef.current;
+    if (!hero) return;
+    if (document.fullscreenElement === hero) document.exitFullscreen?.();
+    else hero.requestFullscreen?.();
   }
 
   return (
-    <section className="anime-hero anime-trailer-hero">
+    <section ref={heroRef} className="anime-hero anime-trailer-hero">
       <div className="anime-backdrop" style={anime.backdrop ? { backgroundImage: `url(${anime.backdrop})` } : undefined} />
       {videoId && <div className="anime-trailer-player" aria-label={`Trailer de ${anime.title}`}><div ref={hostRef} /></div>}
       <div className="anime-backdrop-shade" />
@@ -1653,8 +1731,8 @@ function AnimeTrailerBanner({ anime, language }: { anime: Anime; language: Langu
             <input type="range" min="0" max="100" step="1" value={volume} onChange={(event) => changeVolume(Number(event.target.value))} aria-label={caption.volume} title={`${caption.volume}: ${volume}%`} />
             <output aria-hidden="true">{volume}%</output>
           </div>
-          <button className={captionsEnabled ? "active" : ""} type="button" onClick={toggleCaptions} aria-label={captionsEnabled ? caption.captionsOn : caption.captionsOff} title={`${caption.name}: ${captionsEnabled ? "CC on" : "CC off"}`}>CC · {caption.code.toUpperCase()}</button>
-          <button type="button" onClick={openFullscreen} aria-label="Exibir trailer em tela cheia">⛶</button>
+          <button className={captionsEnabled ? "active" : ""} type="button" onClick={toggleCaptions} disabled={!captionsAvailable} aria-label={!captionsAvailable ? caption.captionsUnavailable : captionsEnabled ? caption.captionsOn : caption.captionsOff} title={!captionsAvailable ? caption.captionsUnavailable : `${caption.name}: ${captionsEnabled ? "CC on" : "CC off"}`}>CC · {caption.code.toUpperCase()}</button>
+          <button type="button" onClick={openFullscreen} aria-label={fullscreen ? "Sair da tela cheia" : "Exibir trailer em tela cheia"}>{fullscreen ? "⤢" : "⛶"}</button>
         </div>
       )}
     </section>

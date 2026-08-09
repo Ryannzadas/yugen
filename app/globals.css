@@ -317,10 +317,15 @@ select { padding: 9px 30px 9px 10px; color: var(--text); background: var(--surfa
 .anime-backdrop { background-position: center 30%; filter: blur(2px) saturate(.7); transform: scale(1.035); }
 .anime-trailer-player { position: absolute; inset: 0; overflow: hidden; background: #000; }
 .anime-trailer-player iframe { position: absolute; top: 50%; left: 50%; width: 100vw; height: 56.25vw; min-width: 100%; min-height: 100%; border: 0; pointer-events: none; transform: translate(-50%, -50%); filter: saturate(.72) brightness(.66); }
+.anime-trailer-hero:fullscreen { width: 100vw; height: 100vh; background: #000; }
+.anime-trailer-hero:fullscreen .anime-trailer-player iframe { filter: saturate(.92) brightness(.9); }
+.anime-trailer-hero:fullscreen .anime-backdrop-shade { background: linear-gradient(0deg, rgba(0,0,0,.58), transparent 28%); }
+.anime-trailer-hero:fullscreen .trailer-controls { right: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(50%); }
 .anime-backdrop-shade { position: absolute; z-index: 1; inset: 0; background: linear-gradient(90deg, rgba(7,8,11,.58), transparent 62%), linear-gradient(0deg, var(--bg), transparent 70%); pointer-events: none; }
 .trailer-controls { position: absolute; z-index: 3; right: clamp(20px, 5vw, 76px); bottom: 34px; display: flex; align-items: center; gap: 6px; padding: 7px; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; background: rgba(5,5,7,.76); box-shadow: 0 16px 45px rgba(0,0,0,.42); backdrop-filter: blur(14px); }
 .trailer-controls button { display: inline-flex; min-width: 40px; height: 36px; align-items: center; justify-content: center; gap: 3px; padding: 0 11px; border: 0; border-radius: 999px; background: transparent; color: #f5f3ef; font-size: 11px; font-weight: 700; }
 .trailer-controls button:hover { background: rgba(255,255,255,.14); }
+.trailer-controls button:disabled { cursor: not-allowed; opacity: .42; }
 .trailer-controls button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .trailer-controls .trailer-play { width: 42px; padding: 0; background: #f5f3ef; color: #0b0b0d; }
 .trailer-controls button.active { background: rgba(255,255,255,.18); }
